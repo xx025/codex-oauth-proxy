@@ -105,6 +105,31 @@ func containsSubstring(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
+func TestTransformResponsesRequestBody_NormalizesStringInput(t *testing.T) {
+	body := map[string]interface{}{
+		"input": "Hello",
+	}
+
+	transformResponsesRequestBody(body, modelGPT5Sol, "low")
+
+	input, ok := body["input"].([]interface{})
+	if !ok || len(input) != 1 {
+		t.Fatalf("expected one normalized input message, got %v", body["input"])
+	}
+	message, ok := input[0].(map[string]interface{})
+	if !ok || message["role"] != "user" || message["type"] != "message" {
+		t.Fatalf("expected a user message, got %v", input[0])
+	}
+	content, ok := message["content"].([]interface{})
+	if !ok || len(content) != 1 {
+		t.Fatalf("expected one input_text item, got %v", message["content"])
+	}
+	text, ok := content[0].(map[string]interface{})
+	if !ok || text["type"] != "input_text" || text["text"] != "Hello" {
+		t.Fatalf("expected normalized input text, got %v", content[0])
+	}
+}
+
 func TestTransformResponsesRequestBody_ModelSpecificReasoningClamp(t *testing.T) {
 	// Mini codex should clamp low effort to medium and default to medium when
 	// no explicit effort is provided.

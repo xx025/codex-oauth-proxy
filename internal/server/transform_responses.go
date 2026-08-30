@@ -20,7 +20,16 @@ func transformResponsesRequestBody(body map[string]interface{}, requestedModel s
 	var systemText string
 	var allInstructions []interface{}
 	if existingInput, ok := body["input"]; ok {
-		if inSlice, ok := existingInput.([]interface{}); ok {
+		if inputText, ok := existingInput.(string); ok {
+			allInstructions = append(allInstructions, map[string]interface{}{
+				"type": "message",
+				"role": "user",
+				"content": []interface{}{map[string]interface{}{
+					"type": "input_text",
+					"text": inputText,
+				}},
+			})
+		} else if inSlice, ok := existingInput.([]interface{}); ok {
 			for _, msg := range inSlice {
 				msgMap, ok := msg.(map[string]interface{})
 				if !ok {

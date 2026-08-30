@@ -52,7 +52,7 @@ func TestConvertedStreamAlwaysUsesEventStreamContentType(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	srv.writeResponse(recorder, response, http.StatusOK, "gpt-5.4-mini", true)
+	srv.writeResponse(recorder, response, http.StatusOK, "gpt-5.4-mini", true, true)
 
 	assert.Equal(t, "text/event-stream; charset=utf-8", recorder.Header().Get("Content-Type"))
 }

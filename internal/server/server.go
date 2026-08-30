@@ -240,7 +240,6 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to parse request body", http.StatusBadRequest)
 		return
 	}
-
 	// Determine whether the client requested streaming.
 	// OpenAI's default is non-streaming when "stream" is omitted, so
 	// we treat absence as false and only stream when explicitly true.
@@ -338,14 +337,14 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 
 	// If the client requested streaming, reuse the existing SSE rewriting path.
 	if stream {
-		s.writeResponse(w, responseData, statusCode, normalizedModel, true)
+		s.writeResponse(w, responseData, statusCode, normalizedModel, true, true)
 		return
 	}
 
 	// Non-streaming path: buffer the upstream SSE stream and synthesize a single
 	// chat completion response for clients that expect the classic JSON shape.
 	if statusCode != http.StatusOK {
-		s.writeResponse(w, responseData, statusCode, normalizedModel, false)
+		s.writeResponse(w, responseData, statusCode, normalizedModel, false, false)
 		return
 	}
 
@@ -384,6 +383,7 @@ func (s *Server) responsesHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to parse request body", http.StatusBadRequest)
 		return
 	}
+	clientStream, _ := requestData["stream"].(bool)
 
 	requestedModel := resolveRequestModel(requestData)
 	requestedEffort := resolveReasoningEffort(requestData)
@@ -394,6 +394,7 @@ func (s *Server) responsesHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Transform request body
 	normalizedModel, normalizedEffort := transformResponsesRequestBody(requestData, requestedModel, requestedEffort)
+	requestData["stream"] = true
 	cacheKey, _ := requestData["prompt_cache_key"].(string)
 
 	modifiedBodyBytes, err := json.Marshal(requestData)
@@ -473,7 +474,28 @@ func (s *Server) responsesHandler(w http.ResponseWriter, r *http.Request) {
 			Msg("Upstream error encountered for responses request")
 	}
 
-	s.writeResponse(w, responseData, statusCode, normalizedModel, false)
+	if clientStream {
+		s.writeResponse(w, responseData, statusCode, normalizedModel, false, true)
+		return
+	}
+	if statusCode != http.StatusOK {
+		s.writeResponse(w, responseData, statusCode, normalizedModel, false, false)
+		return
+	}
+
+	defer responseData.Body.Close()
+	responseObject, err := bufferResponsesFromSSE(responseData.Body)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Error buffering Responses SSE stream for non-streaming client")
+		http.Error(w, "Failed to process streaming response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(responseObject); err != nil {
+		s.logger.Error().Err(err).Msg("Error encoding buffered Responses response")
+	}
 }
 
 func previewResponseBody(resp *http.Response) string {
@@ -636,7 +658,7 @@ func (s *Server) makeChatGPTRequestWithRetry(r *http.Request, url string, body [
 	return resp, statusCode, nil
 }
 
-func (s *Server) writeResponse(w http.ResponseWriter, resp *http.Response, statusCode int, model string, convertSSE bool) {
+func (s *Server) writeResponse(w http.ResponseWriter, resp *http.Response, statusCode int, model string, convertSSE bool, forceSSE bool) {
 	defer resp.Body.Close()
 
 	// Log the response from upstream
@@ -689,7 +711,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *http.Response, statu
 		}
 
 		// Detect streaming responses (handle charset variations)
-		isStreaming := convertSSE || mediaType == "text/event-stream"
+		isStreaming := convertSSE || forceSSE || mediaType == "text/event-stream"
 		if isStreaming {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
