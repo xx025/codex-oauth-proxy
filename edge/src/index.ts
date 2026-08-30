@@ -28,6 +28,8 @@ const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
 const MODEL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MODEL_CATALOG_CACHE_KEY = "model-catalog-cache";
+const CODEX_CLIENT_VERSION = "0.151.0-alpha.7.2";
+const RESPONSES_FAST_PATH_MIN_BYTES = 64 * 1024;
 const encoder = new TextEncoder();
 
 interface ModelCatalogCache {
@@ -314,6 +316,9 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
 
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   const metadata = requestMetadata(url.pathname, requestBody);
+  if (shouldUseResponsesFastPath(request, url, requestBody, env)) {
+    return proxyResponsesFastPath(request, env, ctx, requestBody ?? new ArrayBuffer(0), metadata, startedAt);
+  }
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
   const settings = await loadPoolSettings(env);
@@ -361,6 +366,162 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
   return lastAttempt
     ? trackRequestResponse(stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt)
     : json({ error: "No healthy accounts available" }, 503);
+}
+
+function shouldUseResponsesFastPath(request: Request, url: URL, requestBody: ArrayBuffer | undefined, env: Env): boolean {
+  if (env.PROXY_SERVICE) return false;
+  if (request.method !== "POST" || url.pathname !== "/v1/responses") return false;
+  if (request.headers.get("x-openai-internal-codex-responses-lite") === "true") return true;
+  if ((request.headers.get("originator") || "").toLowerCase().includes("codex")) return true;
+  return (requestBody?.byteLength ?? 0) >= RESPONSES_FAST_PATH_MIN_BYTES;
+}
+
+async function proxyResponsesFastPath(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  requestBody: ArrayBuffer,
+  metadata: RequestMetadata,
+  startedAt: number,
+): Promise<Response> {
+  const excluded: string[] = [];
+  let lastAttempt: { response: Response; accountId: string } | undefined;
+  const settings = await loadPoolSettings(env);
+  const upstreamFetch = createUpstreamFetch(env);
+  const upstreamBody = prepareResponsesFastPathBody(requestBody);
+
+  for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {
+    let account: { id: string; accessToken: string; accountId: string };
+    try {
+      account = await selectAccount(env, excluded);
+    } catch (error) {
+      if (lastAttempt) return trackRequestResponse(
+        lastAttempt.response, env, ctx, metadata, lastAttempt.accountId, startedAt,
+      );
+      throw error;
+    }
+    excluded.push(account.id);
+
+    const response = await upstreamFetch("https://chatgpt.com/backend-api/codex/responses", {
+      method: "POST",
+      headers: responsesFastPathHeaders(request, account),
+      body: upstreamBody.slice(0),
+      redirect: "manual",
+    });
+    const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
+    const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
+    const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
+    if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
+      ctx.waitUntil(report);
+      return trackRequestResponse(response, env, ctx, metadata, account.id, startedAt);
+    }
+    await report;
+    lastAttempt = { response: response.clone(), accountId: account.id };
+    response.body?.cancel().catch(() => undefined);
+  }
+
+  return lastAttempt
+    ? trackRequestResponse(lastAttempt.response, env, ctx, metadata, lastAttempt.accountId, startedAt)
+    : json({ error: "No healthy accounts available" }, 503);
+}
+
+function prepareResponsesFastPathBody(requestBody: ArrayBuffer): ArrayBuffer {
+  try {
+    const body = JSON.parse(new TextDecoder().decode(requestBody)) as Record<string, unknown>;
+    body.store = false;
+    body.stream = true;
+    delete body.max_output_tokens;
+    delete body.max_tokens;
+    delete body.reasoning_effort;
+    if (!Array.isArray(body.include) || !body.include.includes("reasoning.encrypted_content")) {
+      body.include = ["reasoning.encrypted_content"];
+    }
+    if (!("tool_choice" in body)) body.tool_choice = "auto";
+    if (!("parallel_tool_calls" in body)) body.parallel_tool_calls = false;
+    normalizeResponsesInput(body);
+    return new TextEncoder().encode(JSON.stringify(body)).buffer;
+  } catch {
+    return requestBody;
+  }
+}
+
+function normalizeResponsesInput(body: Record<string, unknown>): void {
+  const input = body.input;
+  if (typeof input === "string") {
+    body.input = [{ type: "message", role: "user", content: [{ type: "input_text", text: input }] }];
+    return;
+  }
+  if (!Array.isArray(input)) return;
+
+  const previousInstructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
+  const systemParts: string[] = [];
+  const filtered: unknown[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") {
+      filtered.push(item);
+      continue;
+    }
+    const message = item as Record<string, unknown>;
+    if (message.role === "system") {
+      const content = message.content;
+      if (Array.isArray(content)) {
+        for (const contentItem of content) {
+          if (contentItem && typeof contentItem === "object") {
+            const text = (contentItem as Record<string, unknown>).text;
+            if (typeof text === "string" && text) systemParts.push(text);
+          }
+        }
+      } else if (typeof content === "string" && content) {
+        systemParts.push(content);
+      }
+      continue;
+    }
+    if (typeof message.id === "string" && message.id.length > 64) delete message.id;
+    filtered.push(message);
+  }
+
+  const systemText = systemParts.join("\n\n");
+  if (previousInstructions && systemText) {
+    body.instructions = previousInstructions;
+    filtered.unshift({ role: "developer", content: systemText });
+  } else {
+    body.instructions = previousInstructions || systemText || "";
+  }
+  body.input = filtered;
+}
+
+function responsesFastPathHeaders(
+  request: Request,
+  account: { accessToken: string; accountId: string },
+): Headers {
+  const headers = new Headers({
+    authorization: `Bearer ${stripBearer(account.accessToken)}`,
+    version: CODEX_CLIENT_VERSION,
+    "openai-beta": "responses=v1",
+    session_id: request.headers.get("session_id") || request.headers.get("session-id") || crypto.randomUUID(),
+    accept: "text/event-stream",
+    "content-type": "application/json",
+    "chatgpt-account-id": account.accountId,
+    originator: "codex_cli_rs",
+    "user-agent": `codex_cli_rs/${CODEX_CLIENT_VERSION} (Mac OS 26.3.0; arm64) Apple_Terminal/466`,
+    "x-codex-beta-features": request.headers.get("x-codex-beta-features") || "multi_agent,apps,prevent_idle_sleep",
+  });
+  copyHeaderIfPresent(request.headers, headers, "x-codex-turn-metadata");
+  copyHeaderIfPresent(request.headers, headers, "x-codex-turn-state");
+  copyHeaderIfPresent(request.headers, headers, "x-client-request-id");
+  copyHeaderIfPresent(request.headers, headers, "thread-id");
+  copyHeaderIfPresent(request.headers, headers, "x-codex-window-id");
+  return headers;
+}
+
+function copyHeaderIfPresent(source: Headers, target: Headers, name: string): void {
+  const value = source.get(name);
+  if (value) target.set(name, value);
+}
+
+function stripBearer(token: string): string {
+  const trimmed = token.trim();
+  return trimmed.toLowerCase().startsWith("bearer ") ? trimmed.slice(7).trim() : trimmed;
 }
 
 async function getModelCatalogCache(env: Env): Promise<Response | undefined> {

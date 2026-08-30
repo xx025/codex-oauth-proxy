@@ -13,6 +13,7 @@ function context() {
 
 function environment(options: {
   service?: (request: Request) => Promise<Response>;
+  nativeEgress?: (request: Request) => Promise<Response>;
   accountIds?: string[];
   coreOrigin?: string;
   settings?: Partial<{
@@ -94,6 +95,7 @@ function environment(options: {
     env: {
       ACCOUNT_POOL: { idFromName: () => ({}) as DurableObjectId, get: () => stub as unknown as DurableObjectStub },
       PROXY_SERVICE: options.service ? { fetch: options.service } : undefined,
+      NATIVE_EGRESS: options.nativeEgress ? { fetch: options.nativeEgress } : undefined,
       CORE_ORIGIN: options.coreOrigin,
       ADMIN_API_KEY: "admin-secret",
       KEY_ENCRYPTION_SECRET: "app-secret",
@@ -330,6 +332,46 @@ describe("edge worker", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ model: "unknown", endpoint: "/v1/responses", status: 200, accountId: "b" });
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("bypasses the embedded core for large Codex responses requests", async () => {
+    const core = vi.fn(async () => new Response("core should not be called", { status: 500 }));
+    const nativeEgress = vi.fn(async (request: Request) => {
+      expect(request.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+      expect(request.headers.get("authorization")).toBe("Bearer token-a");
+      expect(request.headers.get("chatgpt-account-id")).toBe("upstream-a");
+      expect(request.headers.get("version")).toBe("0.151.0-alpha.7.2");
+      const body = await request.json() as Record<string, unknown>;
+      expect(body.store).toBe(false);
+      expect(body.stream).toBe(true);
+      expect(body.include).toEqual(["reasoning.encrypted_content"]);
+      expect(body.max_output_tokens).toBeUndefined();
+      return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    });
+    const { env, records } = environment({ service: core, nativeEgress });
+    delete (env as { PROXY_SERVICE?: Fetcher }).PROXY_SERVICE;
+    const { ctx, waits } = context();
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer proxy-secret",
+        "content-type": "application/json",
+        "x-openai-internal-codex-responses-lite": "true",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.6-sol",
+        stream: false,
+        max_output_tokens: 1000,
+        input: [{ role: "user", content: [{ type: "input_text", text: "x".repeat(70 * 1024) }] }],
+      }),
+    }), env as never, ctx);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("data: [DONE]\n\n");
+    await Promise.all(waits);
+    expect(core).not.toHaveBeenCalled();
+    expect(nativeEgress).toHaveBeenCalledTimes(1);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ endpoint: "/v1/responses", accountId: "a", status: 200 });
   });
 
   it("honors the configured maximum number of account attempts", async () => {

@@ -2,6 +2,7 @@ import { TokenUsage } from "./pool";
 
 const MAX_JSON_METRICS_BYTES = 2 * 1024 * 1024;
 const MAX_SSE_EVENT_BYTES = 256 * 1024;
+const MAX_REQUEST_METADATA_BYTES = 64 * 1024;
 
 export interface RequestMetadata {
   model: string;
@@ -12,7 +13,7 @@ export interface RequestMetadata {
 export function requestMetadata(pathname: string, body?: ArrayBuffer): RequestMetadata {
   let model = pathname === "/v1/models" ? "model-catalog" : pathname.startsWith("/mcp") ? "mcp" : "unknown";
   let streaming = false;
-  if (body?.byteLength) {
+  if (body?.byteLength && body.byteLength <= MAX_REQUEST_METADATA_BYTES) {
     try {
       const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
       if (typeof parsed.model === "string" && parsed.model.trim()) model = parsed.model.trim().slice(0, 160);
