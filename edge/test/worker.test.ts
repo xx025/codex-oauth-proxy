@@ -45,9 +45,10 @@ function environment(options: { service: (request: Request) => Promise<Response>
 }
 
 describe("edge worker", () => {
-  it("renders valid account action handlers in the admin UI", () => {
-    expect(ADMIN_HTML).toContain("toggleAccount(\\'");
-    expect(ADMIN_HTML).not.toContain("toggleAccount(''+");
+  it("uses delegated account actions without interpolating inline handlers", () => {
+    expect(ADMIN_HTML).toContain('data-action="toggle"');
+    expect(ADMIN_HTML).toContain('button[data-action]');
+    expect(ADMIN_HTML).not.toContain("onclick=\"toggleAccount(");
   });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
