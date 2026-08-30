@@ -139,12 +139,30 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain("function switchView(view)");
   });
 
+  it("orders the menu by workflow and mirrors every section on the home page", () => {
+    expect(ADMIN_HTML).toContain("['home','accounts','keys','models','usage','settings']");
+    for (const view of ["accounts", "keys", "models", "usage", "settings"]) {
+      expect(ADMIN_HTML).toContain(`data-view-target="${view}"`);
+    }
+    for (const id of ["homeAccountsValue", "homeKeysValue", "homeModelsValue", "homeRequestsValue", "homeSettingsValue"]) {
+      expect(ADMIN_HTML).toContain(`id="${id}"`);
+    }
+  });
+
   it("provides a remembered system, light, and dark theme without a server secret", () => {
     expect(ADMIN_HTML).toContain('id="themeSelect"');
     expect(ADMIN_HTML).toContain('<option value="system">跟随系统</option>');
     expect(ADMIN_HTML).toContain('<option value="dark">深色</option>');
     expect(ADMIN_HTML).toContain("localStorage.setItem('codex-theme',value)");
     expect(ADMIN_HTML).toContain('[data-theme=dark]');
+  });
+
+  it("uses dark-aware Fluent hover colors for interactive surfaces", () => {
+    expect(ADMIN_HTML).toContain("--surface-hover:#303030");
+    expect(ADMIN_HTML).toContain(".btn:hover{background:var(--surface-hover)");
+    expect(ADMIN_HTML).toContain(".nav-item.active,.nav-item.active:hover");
+    expect(ADMIN_HTML).toContain(".info-card:hover,.model-card:hover");
+    expect(ADMIN_HTML).toContain(".account-row:hover,.key-row:hover,.data-table tbody tr:hover{background:var(--surface-hover)}");
   });
 
   it("renders request and token analytics without prompt or response content fields", () => {
