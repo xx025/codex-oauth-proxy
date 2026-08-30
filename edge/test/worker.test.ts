@@ -60,7 +60,7 @@ describe("edge worker", () => {
       headers: { cookie: "codex_ui=1" },
     }), env as never, context().ctx);
     expect(root.status).toBe(200);
-    expect(await root.text()).toContain("账户池概览");
+    expect(await root.text()).toContain("运行概览");
   });
 
   it("uses delegated account actions without interpolating inline handlers", () => {
@@ -81,6 +81,14 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain('class="workspace"');
     expect(ADMIN_HTML).toContain('class="logo-mark"');
     expect(ADMIN_HTML).not.toContain('class="topbar"');
+  });
+
+  it("provides four navigable management sections", () => {
+    for (const view of ["home", "accounts", "keys", "settings"]) {
+      expect(ADMIN_HTML).toContain(`data-view="${view}"`);
+      expect(ADMIN_HTML).toContain(`data-page="${view}"`);
+    }
+    expect(ADMIN_HTML).toContain("function switchView(view)");
   });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
