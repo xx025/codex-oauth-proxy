@@ -122,6 +122,17 @@ describe("edge worker", () => {
     expect(text).not.toContain("token-a");
   });
 
+  it("accepts identities already authorized by Cloudflare Access", async () => {
+    const { env } = environment({ service: async () => new Response("unused") });
+    const response = await worker.fetch(new Request("https://example.test/admin/api/accounts", {
+      headers: {
+        "cf-access-authenticated-user-email": "admin@example.test",
+        "cf-access-jwt-assertion": "header.payload.signature",
+      },
+    }), env as never, context().ctx);
+    expect(response.status).toBe(200);
+  });
+
   it("fails over after a rate limit and reports cooldown outcomes", async () => {
     const service = vi.fn(async (request: Request) => {
       const account = request.headers.get("x-codex-account-id");

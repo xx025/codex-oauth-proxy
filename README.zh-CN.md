@@ -184,7 +184,6 @@ Secrets 说明：
 
 - `INTERNAL_PROXY_KEY`：必需，用于 TypeScript 边缘层和内嵌 Go/Wasm Core 之间的内部信任边界。
 - `KEY_ENCRYPTION_SECRET`：强烈建议使用独立随机值加密可恢复客户端密钥；未设置时回退到 `INTERNAL_PROXY_KEY`。
-- `ADMIN_EMAIL`：使用 Cloudflare Access 保护管理界面时建议设置。
 - `ADMIN_API_KEY`：可选，在没有 Access 身份请求头时作为管理员登录备用方式。
 - `PROXY_API_KEY`：可选的旧版客户端密钥；新部署建议直接在 UI 中生成多个托管密钥。
 

@@ -11,7 +11,6 @@ interface Env {
   NATIVE_EGRESS?: Fetcher;
   ADMIN_API_KEY?: string;
   PROXY_API_KEY?: string;
-  ADMIN_EMAIL?: string;
   INTERNAL_PROXY_KEY: string;
   KEY_ENCRYPTION_SECRET?: string;
   MAX_ACCOUNT_ATTEMPTS?: string;
@@ -167,7 +166,7 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/admin/api/session" && request.method === "POST") {
     enforceSameOrigin(request);
     const { key } = await request.json() as { key?: string };
-    const accessIdentity = await validAccessIdentity(request, env.ADMIN_EMAIL);
+    const accessIdentity = await validAccessIdentity(request);
     const keyIdentity = Boolean(key && env.ADMIN_API_KEY && await constantTimeEqual(key, env.ADMIN_API_KEY));
     if (!accessIdentity && !keyIdentity) return json({ error: "Unauthorized" }, 401);
     const cookie = await createSessionCookie(env.INTERNAL_PROXY_KEY);
@@ -270,7 +269,7 @@ function isProxyRoute(pathname: string): boolean {
 }
 
 async function validAdmin(request: Request, env: Env): Promise<boolean> {
-  if (await validAccessIdentity(request, env.ADMIN_EMAIL)) return true;
+  if (await validAccessIdentity(request)) return true;
   const auth = request.headers.get("authorization");
   if (env.ADMIN_API_KEY && auth?.toLowerCase().startsWith("bearer ") && await constantTimeEqual(auth.slice(7), env.ADMIN_API_KEY)) return true;
   const cookie = parseCookies(request.headers.get("cookie") || "")[SESSION_COOKIE];
@@ -291,10 +290,10 @@ async function validProxyAuth(request: Request, env: Env): Promise<boolean> {
   return response.ok && result.valid === true;
 }
 
-async function validAccessIdentity(request: Request, adminEmail?: string): Promise<boolean> {
-  if (!adminEmail) return false;
+async function validAccessIdentity(request: Request): Promise<boolean> {
   const email = request.headers.get("cf-access-authenticated-user-email") || "";
-  return email !== "" && await constantTimeEqual(email.toLowerCase(), adminEmail.toLowerCase());
+  const assertion = request.headers.get("cf-access-jwt-assertion") || "";
+  return email !== "" && assertion !== "";
 }
 
 async function constantTimeEqual(left: string, right: string): Promise<boolean> {

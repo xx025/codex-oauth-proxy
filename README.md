@@ -200,7 +200,6 @@ Required and optional secrets:
 
 - `INTERNAL_PROXY_KEY` — required internal trust boundary between the TypeScript edge and embedded Go/Wasm Core.
 - `KEY_ENCRYPTION_SECRET` — strongly recommended as a dedicated key-encryption secret; otherwise `INTERNAL_PROXY_KEY` is used as the fallback.
-- `ADMIN_EMAIL` — recommended when the dashboard is protected by Cloudflare Access.
 - `ADMIN_API_KEY` — optional fallback for admin login without an Access identity header.
 - `PROXY_API_KEY` — optional legacy client key; new deployments should generate multiple managed keys in the UI.
 
