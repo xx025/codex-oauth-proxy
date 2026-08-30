@@ -15,6 +15,7 @@
 | 无竞争自动刷新 | Durable Object 串行化账号选择和 OAuth 刷新，避免并发请求重复轮换 Refresh Token。 |
 | 轮询与故障转移 | 健康账号自动轮询；遇到 `401`、`403`、`429` 和 `5xx` 时进入冷却并尝试其他账号。 |
 | OpenAI API 兼容 | 支持 `/v1/models`、`/v1/chat/completions` 和 `/v1/responses`，包括 SSE 流式响应。 |
+| 实时模型与额度 | 管理面板读取账号实际可用的模型，并显示每个启用账号主、次窗口的剩余额度和重置时间。 |
 | 多客户端密钥 | 可以生成、复看、复制和注销多个独立 API 密钥，无需向客户端暴露 OAuth 凭据。 |
 | Cloudflare 原生安全 | 提供管理会话、同源校验、安全响应头、可恢复密钥加密和账号元数据脱敏。 |
 | 单 Worker 部署 | TypeScript 边缘层、管理 UI、Durable Object 和 Go/Wasm 转换核心部署在同一个 Worker。 |
@@ -59,7 +60,7 @@ OpenAI 兼容客户端
           ChatGPT Codex / OAuth 后端
 ```
 
-OAuth Access Token、Refresh Token 和账号 ID 始终保留在服务端。客户端只能获得 OpenAI 兼容响应和经过脱敏的账号元数据。
+OAuth Access Token、Refresh Token 和账号 ID 始终保留在服务端。模型与额度查询同样由服务端经选定 Tunnel 完成；浏览器只能获得模型元数据、剩余百分比、重置时间和经过脱敏的账号元数据。
 
 ## 推荐的域名与 Access 布局
 

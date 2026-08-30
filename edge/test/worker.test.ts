@@ -90,12 +90,19 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).not.toContain('class="topbar"');
   });
 
-  it("provides four navigable management sections", () => {
-    for (const view of ["home", "accounts", "keys", "settings"]) {
+  it("provides navigable account, model, key, and settings sections", () => {
+    for (const view of ["home", "accounts", "models", "keys", "settings"]) {
       expect(ADMIN_HTML).toContain(`data-view="${view}"`);
       expect(ADMIN_HTML).toContain(`data-page="${view}"`);
     }
     expect(ADMIN_HTML).toContain("function switchView(view)");
+  });
+
+  it("renders quota refresh and live model catalog controls", () => {
+    expect(ADMIN_HTML).toContain("/admin/api/accounts/usage");
+    expect(ADMIN_HTML).toContain("剩余额度");
+    expect(ADMIN_HTML).toContain("/admin/api/models");
+    expect(ADMIN_HTML).toContain("可用模型");
   });
 
   it("offers ChatGPT device login without exposing OAuth tokens to browser code", () => {
@@ -133,6 +140,23 @@ describe("edge worker", () => {
       },
     }), env as never, context().ctx);
     expect(response.status).toBe(200);
+  });
+
+  it("returns the live model catalog through the protected admin API", async () => {
+    const service = vi.fn(async (request: Request) => {
+      expect(new URL(request.url).pathname).toBe("/v1/models");
+      expect(request.headers.get("x-codex-account-id")).toBe("upstream-a");
+      return Response.json({ data: [{ id: "gpt-5.6-sol", object: "model" }] });
+    });
+    const { env } = environment({ service });
+    const { ctx, waits } = context();
+    const response = await worker.fetch(new Request("https://example.test/admin/api/models", {
+      headers: { authorization: "Bearer admin-secret" },
+    }), env as never, ctx);
+    await Promise.all(waits);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: [{ id: "gpt-5.6-sol", object: "model" }] });
   });
 
   it("fails over after a rate limit and reports cooldown outcomes", async () => {

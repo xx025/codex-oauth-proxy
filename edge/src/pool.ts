@@ -11,6 +11,7 @@ export interface AccountRecord {
   cooldownUntil: number;
   failureCount: number;
   lastStatus?: number;
+  usage?: AccountUsage;
 }
 
 export interface AccountMetadata {
@@ -24,6 +25,22 @@ export interface AccountMetadata {
   cooldownUntil: number;
   failureCount: number;
   lastStatus?: number;
+  usage?: AccountUsage;
+}
+
+export interface UsageWindow {
+  usedPercent: number;
+  remainingPercent: number;
+  windowMinutes: number;
+  resetsAt: number;
+}
+
+export interface AccountUsage {
+  primary?: UsageWindow;
+  secondary?: UsageWindow;
+  creditsBalance?: number;
+  capturedAt: number;
+  error?: string;
 }
 
 export interface PoolState {
@@ -60,6 +77,7 @@ export interface ImportPayload {
 
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 60 * 1000;
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
+const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 export class PoolError extends Error {
@@ -78,6 +96,33 @@ export class AccountPoolCore {
 
   async list(): Promise<AccountMetadata[]> {
     const state = await this.load();
+    return state.accounts.map(redactAccount);
+  }
+
+  async refreshUsage(): Promise<AccountMetadata[]> {
+    const state = await this.load();
+    await Promise.all(state.accounts.map(async (account) => {
+      if (!account.enabled) return;
+      try {
+        await this.refreshIfNeeded(account);
+        let response = await this.fetchUsage(account);
+        if (response.status === 401 || response.status === 403) {
+          account.expiresAt = 0;
+          await this.refreshIfNeeded(account);
+          response = await this.fetchUsage(account);
+        }
+        if (!response.ok) throw new Error(`Usage endpoint returned HTTP ${response.status}`);
+        account.usage = parseUsage(await response.json(), this.now());
+      } catch (error) {
+        account.usage = {
+          ...account.usage,
+          capturedAt: this.now(),
+          error: safeUsageError(error),
+        };
+      }
+      account.updatedAt = this.now();
+    }));
+    await this.storage.put(state);
     return state.accounts.map(redactAccount);
   }
 
@@ -286,6 +331,16 @@ export class AccountPoolCore {
     account.cooldownUntil = 0;
   }
 
+  private fetchUsage(account: AccountRecord): Promise<Response> {
+    return this.oauthFetch(USAGE_URL, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${account.accessToken}`,
+        "chatgpt-account-id": account.accountId,
+      },
+    });
+  }
+
   private async load(): Promise<PoolState> {
     return await this.storage.get() ?? { accounts: [], cursor: 0 };
   }
@@ -364,6 +419,46 @@ function stringValue(value: unknown): string {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+}
+
+function parseUsage(input: unknown, capturedAt: number): AccountUsage {
+  const root = objectValue(input);
+  const rateLimit = objectValue(root?.rate_limit);
+  const primary = parseUsageWindow(rateLimit?.primary_window);
+  const secondary = parseUsageWindow(rateLimit?.secondary_window);
+  if (!primary && !secondary) throw new Error("Usage response did not contain quota windows");
+  const credits = objectValue(root?.credits);
+  const creditsBalance = optionalNumber(credits?.balance);
+  return {
+    primary,
+    secondary,
+    creditsBalance,
+    capturedAt,
+  };
+}
+
+function parseUsageWindow(input: unknown): UsageWindow | undefined {
+  const window = objectValue(input);
+  const usedPercent = optionalNumber(window?.used_percent);
+  const windowSeconds = optionalNumber(window?.limit_window_seconds);
+  const resetsAt = optionalNumber(window?.reset_at);
+  if (usedPercent === undefined || windowSeconds === undefined || resetsAt === undefined) return undefined;
+  return {
+    usedPercent,
+    remainingPercent: Math.max(0, Math.min(100, 100 - usedPercent)),
+    windowMinutes: Math.ceil(windowSeconds / 60),
+    resetsAt,
+  };
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function safeUsageError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Usage refresh failed";
+  return /^Usage endpoint returned HTTP \d{3}$/.test(message) ? message : "Usage refresh failed";
 }
 
 function jwtExpiry(token: string): number {

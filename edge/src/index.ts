@@ -48,6 +48,9 @@ export class AccountPool implements DurableObject {
         const account = await this.core.importAccount(parseImportPayload(await request.json()));
         return json({ account }, 201);
       }
+      if (url.pathname === "/accounts/usage" && request.method === "POST") {
+        return json({ accounts: await this.core.refreshUsage() });
+      }
       if (url.pathname === "/oauth/device/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
         await this.pruneDeviceLogins();
@@ -146,7 +149,7 @@ export const worker = {
         return redirect("/", `${UI_COOKIE}=1; Secure; SameSite=Strict; Path=/; Max-Age=31536000`);
       }
       if (url.pathname.startsWith("/admin/api/")) {
-        return await handleAdmin(request, env);
+        return await handleAdmin(request, env, ctx);
       }
       if (!isProxyRoute(url.pathname)) return json({ error: "Not found" }, 404);
       if (!await validProxyAuth(request, env)) return json({ error: "Unauthorized" }, 401);
@@ -159,7 +162,7 @@ export const worker = {
 
 export default worker;
 
-async function handleAdmin(request: Request, env: Env): Promise<Response> {
+async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/admin/api/session" && request.method === "POST") {
     enforceSameOrigin(request);
@@ -178,6 +181,11 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
   }
   if (!await validAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
   if (request.method !== "GET") enforceSameOrigin(request);
+
+  if (url.pathname === "/admin/api/models" && request.method === "GET") {
+    const upstreamURL = new URL("/v1/models", request.url);
+    return cloneWithSecurityHeaders(await proxyWithFailover(new Request(upstreamURL), env, ctx));
+  }
 
   const stub = accountPoolStub(env);
   const upstreamPath = url.pathname.replace("/admin/api", "") || "/";

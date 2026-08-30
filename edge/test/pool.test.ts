@@ -55,6 +55,36 @@ describe("AccountPoolCore", () => {
     expect(storage.value?.accounts[0].refreshToken).toBe("new-refresh");
   });
 
+  it("refreshes and persists redacted quota snapshots for each enabled account", async () => {
+    const storage = new MemoryStorage();
+    const usageFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://chatgpt.com/backend-api/wham/usage");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-a");
+      expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("a");
+      return Response.json({
+        rate_limit: {
+          primary_window: { used_percent: 25, limit_window_seconds: 18_000, reset_at: 2_000 },
+          secondary_window: { used_percent: 80, limit_window_seconds: 604_800, reset_at: 3_000 },
+        },
+        credits: { balance: 12.5 },
+      });
+    });
+    const pool = new AccountPoolCore(storage, usageFetch as typeof fetch, () => 1_000);
+    await pool.importAccount(credential("a", "Primary"));
+
+    const [account] = await pool.refreshUsage();
+
+    expect(account.usage).toEqual({
+      primary: { usedPercent: 25, remainingPercent: 75, windowMinutes: 300, resetsAt: 2_000 },
+      secondary: { usedPercent: 80, remainingPercent: 20, windowMinutes: 10_080, resetsAt: 3_000 },
+      creditsBalance: 12.5,
+      capturedAt: 1_000,
+    });
+    expect(account).not.toHaveProperty("accessToken");
+    expect(account).not.toHaveProperty("refreshToken");
+    expect(storage.value?.accounts[0].usage?.primary?.remainingPercent).toBe(75);
+  });
+
   it("cools down rate-limited accounts and fails over", async () => {
     let now = 1_000;
     const storage = new MemoryStorage();
