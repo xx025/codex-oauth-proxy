@@ -180,19 +180,18 @@ Worker 通过 Workers VPC Network 直接绑定一个选定的 Cloudflare Tunnel�
 
 Worker 代码还会执行相同的双域名白名单，拒绝访问其他目标。
 
-Secrets 说明：
+只使用两个 Secret：
 
-- `INTERNAL_PROXY_KEY`：必需，用于 TypeScript 边缘层和内嵌 Go/Wasm Core 之间的内部信任边界。
-- `KEY_ENCRYPTION_SECRET`：强烈建议使用独立随机值加密可恢复客户端密钥；未设置时回退到 `INTERNAL_PROXY_KEY`。
-- `ADMIN_API_KEY`：可选，在没有 Access 身份请求头时作为管理员登录备用方式。
-- `PROXY_API_KEY`：可选的旧版客户端密钥；新部署建议直接在 UI 中生成多个托管密钥。
+- `KEY_ENCRYPTION_SECRET`：必需，统一用于可恢复客户端密钥加密、管理员会话签名和内嵌 Core 信任边界。
+- `ADMIN_API_KEY`：可选，在没有 Cloudflare Access 时作为管理员登录备用方式。
+
+客户端 API 密钥直接在 UI 中生成和管理，不需要为每个客户端配置环境变量。故障转移次数使用代码中的安全默认值，也不再暴露为部署变量。
 
 连接命名 Tunnel，将 `edge/wrangler.toml` 中的 `tunnel_id` 替换成它的 UUID，然后部署：
 
 ```bash
 cd edge
 npx wrangler secret put ADMIN_API_KEY
-npx wrangler secret put INTERNAL_PROXY_KEY
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 npx wrangler deploy
 ```

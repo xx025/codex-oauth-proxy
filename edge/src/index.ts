@@ -10,15 +10,13 @@ interface Env {
   PROXY_SERVICE?: Fetcher;
   NATIVE_EGRESS?: Fetcher;
   ADMIN_API_KEY?: string;
-  PROXY_API_KEY?: string;
-  INTERNAL_PROXY_KEY: string;
-  KEY_ENCRYPTION_SECRET?: string;
-  MAX_ACCOUNT_ATTEMPTS?: string;
+  KEY_ENCRYPTION_SECRET: string;
 }
 
 const SESSION_COOKIE = "codex_admin";
 const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
+const MAX_ACCOUNT_ATTEMPTS = 3;
 const encoder = new TextEncoder();
 
 export class AccountPool implements DurableObject {
@@ -31,7 +29,7 @@ export class AccountPool implements DurableObject {
     this.core = new AccountPoolCore({
       get: () => this.state.storage.get<PoolState>("pool"),
       put: (value) => this.state.storage.put("pool", value),
-    }, this.upstreamFetch, Date.now, env.KEY_ENCRYPTION_SECRET || env.INTERNAL_PROXY_KEY);
+    }, this.upstreamFetch, Date.now, env.KEY_ENCRYPTION_SECRET);
   }
 
   fetch(request: Request): Promise<Response> {
@@ -169,7 +167,7 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
     const accessIdentity = await validAccessIdentity(request);
     const keyIdentity = Boolean(key && env.ADMIN_API_KEY && await constantTimeEqual(key, env.ADMIN_API_KEY));
     if (!accessIdentity && !keyIdentity) return json({ error: "Unauthorized" }, 401);
-    const cookie = await createSessionCookie(env.INTERNAL_PROXY_KEY);
+    const cookie = await createSessionCookie(env.KEY_ENCRYPTION_SECRET);
     return json({ ok: true }, 200, { "set-cookie": cookie });
   }
   if (url.pathname === "/admin/api/session" && request.method === "DELETE") {
@@ -192,12 +190,11 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
 }
 
 async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const maxAttempts = Math.max(1, Math.min(10, Number(env.MAX_ACCOUNT_ATTEMPTS || 3)));
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   const excluded: string[] = [];
   let lastResponse: Response | undefined;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ACCOUNT_ATTEMPTS; attempt += 1) {
     let account: { id: string; accessToken: string; accountId: string };
     try {
       account = await selectAccount(env, excluded);
@@ -207,9 +204,9 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     }
     excluded.push(account.id);
     const headers = new Headers(request.headers);
-    headers.set("authorization", `Bearer ${env.INTERNAL_PROXY_KEY}`);
+    headers.set("authorization", `Bearer ${env.KEY_ENCRYPTION_SECRET}`);
     headers.delete("x-api-key");
-    headers.set("x-codex-internal-key", env.INTERNAL_PROXY_KEY);
+    headers.set("x-codex-internal-key", env.KEY_ENCRYPTION_SECRET);
     headers.set("x-codex-access-token", account.accessToken);
     headers.set("x-codex-account-id", account.accountId);
 
@@ -222,7 +219,7 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
     const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
-    if (!shouldFailover || attempt === maxAttempts - 1) {
+    if (!shouldFailover || attempt === MAX_ACCOUNT_ATTEMPTS - 1) {
       ctx.waitUntil(report);
       return stripInternalHeaders(response);
     }
@@ -273,14 +270,13 @@ async function validAdmin(request: Request, env: Env): Promise<boolean> {
   const auth = request.headers.get("authorization");
   if (env.ADMIN_API_KEY && auth?.toLowerCase().startsWith("bearer ") && await constantTimeEqual(auth.slice(7), env.ADMIN_API_KEY)) return true;
   const cookie = parseCookies(request.headers.get("cookie") || "")[SESSION_COOKIE];
-  return cookie ? verifySessionCookie(cookie, env.INTERNAL_PROXY_KEY) : false;
+  return cookie ? verifySessionCookie(cookie, env.KEY_ENCRYPTION_SECRET) : false;
 }
 
 async function validProxyAuth(request: Request, env: Env): Promise<boolean> {
   const auth = request.headers.get("authorization");
   const candidate = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7) : request.headers.get("x-api-key") || "";
   if (!candidate) return false;
-  if (env.PROXY_API_KEY && await constantTimeEqual(candidate, env.PROXY_API_KEY)) return true;
   const response = await accountPoolStub(env).fetch("https://account-pool/verify-proxy", {
     method: "POST",
     headers: { "content-type": "application/json" },

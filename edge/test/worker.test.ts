@@ -31,6 +31,10 @@ function environment(options: {
         reports.push(await request.json() as { id: string; status: number });
         return Response.json({ ok: true });
       }
+      if (url.pathname === "/verify-proxy") {
+        const { key } = await request.json() as { key?: string };
+        return Response.json({ valid: key === "proxy-secret" });
+      }
       if (url.pathname === "/accounts") return Response.json({ accounts: [{ id: "a", name: "A", accountId: "upstream-a" }] });
       return Response.json({ ok: true });
     },
@@ -42,9 +46,7 @@ function environment(options: {
       PROXY_SERVICE: options.service ? { fetch: options.service } : undefined,
       CORE_ORIGIN: options.coreOrigin,
       ADMIN_API_KEY: "admin-secret",
-      PROXY_API_KEY: "proxy-secret",
-      INTERNAL_PROXY_KEY: "internal-secret",
-      MAX_ACCOUNT_ATTEMPTS: "3",
+      KEY_ENCRYPTION_SECRET: "app-secret",
     },
   };
 }

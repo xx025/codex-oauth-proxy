@@ -4,6 +4,10 @@ interface CoreWorker {
   fetch(request: Request, env: Record<string, unknown>, ctx: ExecutionContext): Promise<Response>;
 }
 
+interface EmbeddedCoreEnv extends EgressEnv {
+  KEY_ENCRYPTION_SECRET: string;
+}
+
 let coreWorkerPromise: Promise<CoreWorker> | undefined;
 
 async function loadCoreWorker(): Promise<CoreWorker> {
@@ -17,9 +21,13 @@ async function loadCoreWorker(): Promise<CoreWorker> {
 
 export async function fetchEmbeddedCore(
   request: Request,
-  env: EgressEnv,
+  env: EmbeddedCoreEnv,
   ctx: ExecutionContext,
 ): Promise<Response> {
   const core = await loadCoreWorker();
-  return core.fetch(request, { ...env, EGRESS: createUpstreamBinding(env) }, ctx);
+  return core.fetch(request, {
+    ...env,
+    INTERNAL_PROXY_KEY: env.KEY_ENCRYPTION_SECRET,
+    EGRESS: createUpstreamBinding(env),
+  }, ctx);
 }

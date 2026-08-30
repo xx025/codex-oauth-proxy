@@ -36,7 +36,7 @@ describe("AccountPool device routes", () => {
     vi.stubGlobal("fetch", upstream);
     const { values, state } = durableState();
     const object = new AccountPool(state, {
-      INTERNAL_PROXY_KEY: "internal",
+      KEY_ENCRYPTION_SECRET: "internal",
       NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
     } as never);
 

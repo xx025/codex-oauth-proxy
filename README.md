@@ -196,19 +196,18 @@ OAuth credentials live only in Durable Object storage. Account list responses co
 
 The Worker uses a direct Workers VPC Network binding to one selected Cloudflare Tunnel (`tunnel_id`). This avoids ambiguous Mesh or Hostname Route selection and ensures model traffic, device login, and token refresh use that tunnel's exit node. The connector runs only the official `cloudflare/cloudflared` image; no custom relay application is required. Worker code also enforces the `chatgpt.com` and `auth.openai.com` allowlist.
 
-Required and optional secrets:
+Only two secrets are used:
 
-- `INTERNAL_PROXY_KEY` — required internal trust boundary between the TypeScript edge and embedded Go/Wasm Core.
-- `KEY_ENCRYPTION_SECRET` — strongly recommended as a dedicated key-encryption secret; otherwise `INTERNAL_PROXY_KEY` is used as the fallback.
-- `ADMIN_API_KEY` — optional fallback for admin login without an Access identity header.
-- `PROXY_API_KEY` — optional legacy client key; new deployments should generate multiple managed keys in the UI.
+- `KEY_ENCRYPTION_SECRET` — required application secret for recoverable client-key encryption, admin-session signing, and the embedded Core trust boundary.
+- `ADMIN_API_KEY` — optional fallback for admin login without Cloudflare Access.
+
+Client API keys are generated and managed in the UI, so no per-client environment variables are needed. The failover attempt limit is a safe code default rather than a deployment variable.
 
 Connect the named Cloudflare Tunnel, replace `tunnel_id` in `edge/wrangler.toml` with its UUID, then deploy the single Worker:
 
 ```bash
 cd edge
 npx wrangler secret put ADMIN_API_KEY
-npx wrangler secret put INTERNAL_PROXY_KEY
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 npx wrangler deploy
 ```
