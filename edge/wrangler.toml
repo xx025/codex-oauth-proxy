@@ -18,7 +18,8 @@ MAX_ACCOUNT_ATTEMPTS = "3"
 
 [[vpc_networks]]
 binding = "NATIVE_EGRESS"
-network_id = "cf1:network"
+# Replace this with the UUID of the Cloudflare Tunnel selected for egress.
+tunnel_id = "b3687315-a46f-4ef7-8a6c-d05a347dae8d"
 remote = true
 
 [observability.logs]

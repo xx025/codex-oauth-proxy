@@ -18,7 +18,7 @@
 | 多客户端密钥 | 可以生成、复看、复制和注销多个独立 API 密钥，无需向客户端暴露 OAuth 凭据。 |
 | Cloudflare 原生安全 | 提供管理会话、同源校验、安全响应头、可恢复密钥加密和账号元数据脱敏。 |
 | 单 Worker 部署 | TypeScript 边缘层、管理 UI、Durable Object 和 Go/Wasm 转换核心部署在同一个 Worker。 |
-| 可控网络出口 | Workers VPC 主机名路由只允许指定的 OpenAI 域名经过官方 `cloudflared` 和选定的出口 IP。 |
+| 可控网络出口 | Workers VPC 直接绑定选定 Tunnel，让允许的 OpenAI 域名经过官方 `cloudflared` 和指定出口 IP。 |
 
 ## 以 Cloudflare 为核心
 
@@ -48,9 +48,9 @@ OpenAI 兼容客户端
           │ AccountPool DO   │
           │ 账号池与客户端密钥 │
           └────────┬─────────┘
-                   │ NATIVE_EGRESS (cf1:network)
+                   │ NATIVE_EGRESS（选定 Tunnel）
                    ▼
-             指定域名的 Tunnel 路由
+           Workers VPC 直接绑定 Tunnel
                    │
                    ▼
        仅运行官方 cloudflare/cloudflared
@@ -176,7 +176,7 @@ OAuth 凭据只保存在 Durable Object 中。账号列表接口仅返回脱敏�
 
 ### 原生网络出口
 
-Worker 使用账号级 Workers VPC Network：`network_id = "cf1:network"`。将 `chatgpt.com` 和 `auth.openai.com` 的 Tunnel Hostname Route 指向指定 Cloudflare Tunnel，即可让模型请求、设备码登录和 Token 刷新从选定节点出站。出口节点只需要运行官方 `cloudflare/cloudflared` 镜像，不需要部署自定义中转代码。
+Worker 通过 Workers VPC Network 直接绑定一个选定的 Cloudflare Tunnel（`tunnel_id`），避免 Mesh 或 Hostname Route 选择不明确，确保模型请求、设备码登录和 Token 刷新均从该 Tunnel 的节点出站。出口节点只需要运行官方 `cloudflare/cloudflared` 镜像，不需要部署自定义中转代码。
 
 Worker 代码还会执行相同的双域名白名单，拒绝访问其他目标。
 
@@ -188,7 +188,7 @@ Secrets 说明：
 - `ADMIN_API_KEY`：可选，在没有 Access 身份请求头时作为管理员登录备用方式。
 - `PROXY_API_KEY`：可选的旧版客户端密钥；新部署建议直接在 UI 中生成多个托管密钥。
 
-连接命名 Tunnel，并为上述两个域名建立 Tunnel Hostname Route 后部署：
+连接命名 Tunnel，将 `edge/wrangler.toml` 中的 `tunnel_id` 替换成它的 UUID，然后部署：
 
 ```bash
 cd edge

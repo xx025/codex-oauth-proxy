@@ -18,7 +18,7 @@ A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Co
 | Multiple client keys | Generate, review, copy, and revoke independent API keys without exposing OAuth credentials to clients. |
 | Cloudflare-native security | Admin sessions, same-origin checks, secure headers, encrypted recoverable keys, and metadata-only account responses. |
 | One Worker deployment | The TypeScript edge, admin UI, Durable Object, and Go/Wasm transformation core deploy together. |
-| Controlled network egress | Workers VPC hostname routes can send only the allowed OpenAI hosts through an official `cloudflared` connector and a chosen exit IP. |
+| Controlled network egress | A direct Workers VPC Tunnel binding sends the allowed OpenAI hosts through an official `cloudflared` connector and a chosen exit IP. |
 
 ## Cloudflare is the primary deployment target
 
@@ -48,9 +48,9 @@ OpenAI client
            │ AccountPool DO   │
            │ accounts + keys  │
            └────────┬─────────┘
-                    │ NATIVE_EGRESS (cf1:network)
+                    │ NATIVE_EGRESS (selected Tunnel)
                     ▼
-      Tunnel Hostname routes for allowed hosts
+          Direct Workers VPC Tunnel binding
                     │
                     ▼
        official cloudflare/cloudflared only
@@ -194,7 +194,7 @@ OAuth credentials live only in Durable Object storage. Account list responses co
 
 ### Native egress routing
 
-The Worker uses the account-wide Workers VPC Network (`network_id = "cf1:network"`). Tunnel Hostname routes for `chatgpt.com` and `auth.openai.com` point to a named Cloudflare Tunnel. The tunnel connector runs only the official `cloudflare/cloudflared` image on the selected exit node, so model traffic, device login, and token refresh leave through that node without a custom relay application. Worker code also enforces the same two-host allowlist.
+The Worker uses a direct Workers VPC Network binding to one selected Cloudflare Tunnel (`tunnel_id`). This avoids ambiguous Mesh or Hostname Route selection and ensures model traffic, device login, and token refresh use that tunnel's exit node. The connector runs only the official `cloudflare/cloudflared` image; no custom relay application is required. Worker code also enforces the `chatgpt.com` and `auth.openai.com` allowlist.
 
 Required and optional secrets:
 
@@ -204,7 +204,7 @@ Required and optional secrets:
 - `ADMIN_API_KEY` — optional fallback for admin login without an Access identity header.
 - `PROXY_API_KEY` — optional legacy client key; new deployments should generate multiple managed keys in the UI.
 
-Connect the named Cloudflare Tunnel, add both Tunnel Hostname routes, then deploy the single Worker:
+Connect the named Cloudflare Tunnel, replace `tunnel_id` in `edge/wrangler.toml` with its UUID, then deploy the single Worker:
 
 ```bash
 cd edge
