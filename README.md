@@ -102,118 +102,6 @@ Do **not** enable Worker-level Access when ordinary OpenAI clients need to call 
 
 For a private deployment where every client can send Cloudflare Access service-token headers, Worker-level Access is also supported.
 
-## Deployment modes
-
-- **Cloudflare native mode (recommended)** — one edge deployment with no application server, a web UI, centralized account pool, and automatic failover.
-- **Local Go mode (optional)** — for one-machine workflows, local MCP support, and independent XDG/keychain credential storage.
-
-The Cloudflare edition deploys directly from this repository. The package-manager commands below install only the optional local Go proxy.
-
-## Optional local installation
-
-Option 1 (recommended): install a prebuilt binary via npm (macOS, Linux, Windows):
-
-```bash
-npm install -g codex-oauth-proxy
-```
-
-Option 2: install with mise:
-
-```bash
-mise use -g go:github.com/dvcrn/codex-oauth-proxy/cmd/codex-oauth-proxy@latest
-```
-
-Option 3: install from source with Go:
-
-```bash
-go install github.com/dvcrn/codex-oauth-proxy/cmd/codex-oauth-proxy@latest
-```
-
-## Setup
-
-### Credentials Storage & Migration
-
-The proxy now uses **independent credential storage** to avoid token collisions with the system Codex CLI.
-
-**Default behavior (`--creds-store=auto`)**:
-
-- Stores credentials in `~/.config/codex-oauth-proxy/auth.json` (XDG config directory)
-- On first launch, automatically migrates from:
-  1. Legacy file (`~/.codex/auth.json`) if it exists
-  2. System Keychain if no legacy file found
-- After migration, immediately refreshes tokens to establish an independent token chain
-- All subsequent token refreshes are stored in the new location
-
-**Credential store modes**:
-
-```bash
-# Auto migration (default) - uses XDG config directory
-./codex-oauth-proxy --creds-store=auto
-
-# Explicit XDG path
-./codex-oauth-proxy --creds-store=xdg
-
-# Custom path
-./codex-oauth-proxy --creds-store=xdg --creds-path=/custom/path/auth.json
-
-# Legacy mode (shares with system CLI)
-./codex-oauth-proxy --creds-store=legacy --creds-path=~/.codex/auth.json
-
-# Keychain mode (macOS only)
-./codex-oauth-proxy --creds-store=keychain
-
-# Environment variables mode
-./codex-oauth-proxy --creds-store=env
-```
-
-**Migration flags**:
-
-```bash
-# Skip immediate token refresh after migration (not recommended)
-./codex-oauth-proxy --disable-migrate-refresh
-```
-
-**Environment variables** (for `--creds-store=env` mode):
-
-```bash
-export ACCESS_TOKEN="your-access-token"
-export ACCOUNT_ID="your-account-id"
-```
-
-**Server config**:
-
-```bash
-export PORT="3000"  # default: 9879
-export ENV="production"  # default: development (console logs)
-export DISABLE_HEALTH_LOGS="true"  # default: false; disables request logging for /health
-```
-
-**Migration logs**:
-The server provides detailed logging during migration:
-
-- `🔍` - Checking for existing credentials
-- `📄` - Reading from legacy file or keychain
-- `💾` - Writing credentials to new location
-- `🔄` - Performing token refresh
-- `✅` - Success indicators
-- `⚠️` - Warnings (e.g., refresh failures)
-- `❌` - Errors
-
-**Troubleshooting**:
-
-- If migration fails, the server will continue with existing credentials if available
-- Check logs for detailed error messages
-- Use `--creds-store=legacy` to temporarily revert to old behavior
-- Manually inspect `~/.config/codex-oauth-proxy/auth.json` for credential status
-
-## Usage
-
-```bash
-just build  # Build binary
-just run    # Run server
-just test   # Run tests
-```
-
 ## Cloudflare multi-account deployment
 
 The Cloudflare deployment uses one Worker, `codex-oauth-proxy`. The TypeScript edge and Go/Wasm Core are bundled into the same Worker. It authenticates clients, serves the admin UI at `/`, selects accounts, applies failover and cooldown, preserves OpenAI-compatible transformations and streaming, and owns the `AccountPool` Durable Object.
@@ -246,8 +134,6 @@ Then attach the API and administration Custom Domains to the same Worker. In Zer
 
 Open `/`, authenticate through Cloudflare Access (or the optional `ADMIN_API_KEY` fallback), and add accounts with any of the three supported methods: device-code login, PKCE browser login by pasting the resulting `http://localhost:1455/auth/callback?...` URL, or manual credential JSON import. The callback-paste flow verifies the one-time OAuth `state` and keeps the PKCE verifier in Durable Object storage. Generate a proxy API key in the UI; proxy endpoints accept it as a bearer token or `X-API-Key`.
 
-The Cloudflare build returns `501 Not Implemented` for `/mcp` to stay within the Worker bundle limit. The local Go binary retains full MCP support.
-
 ### Account routing
 
 Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`, or `5xx` enter an exponential cooldown (respecting `Retry-After` for rate limits) and the request is retried on another account before a response body is streamed. Successful requests clear the account failure state. Mid-stream upstream failures cannot be retried after bytes have reached the client.
@@ -256,38 +142,8 @@ Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`
 
 - `POST /v1/chat/completions` - OpenAI chat completions-compatible endpoint
 - `POST /v1/responses` - OpenAI Responses-compatible endpoint (Codex)
+- `GET /v1/models` - live models and supported reasoning-effort variants
 - `GET /health` - Health check
-- `/mcp` - local Go mode only; exposes `ask_codex` and `ask_codex_models` as MCP tools
-
-## MCP clients
-
-The proxy also speaks MCP over streamable HTTP at `/mcp`, so any MCP client can ask
-Codex models a question without going through the chat completions or responses
-endpoints. The session is stateless and authenticates with the same `ADMIN_API_KEY`
-as everything else, sent as a bearer token.
-
-```json
-{
-  "mcpServers": {
-    "ask-codex": {
-      "type": "http",
-      "url": "http://localhost:9879/mcp",
-      "headers": {
-        "Authorization": "Bearer xxxx"
-      }
-    }
-  }
-}
-```
-
-Two tools are exposed:
-
-- `ask_codex(model, prompt)` - ask a model a single self-contained question and get
-  the answer back as text. There is no conversation history, so the prompt needs to
-  carry all the context. Reasoning effort suffixes work here too, so `gpt-5.5-high`
-  is a valid model.
-- `ask_codex_models()` - list the model IDs that can be passed to `ask_codex`, with the
-  reasoning effort levels each one accepts.
 
 ## Models and reasoning
 
