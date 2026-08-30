@@ -9,7 +9,7 @@ import {
   publicBrowserLogin,
   publicDeviceLogin,
 } from "./oauth";
-import { ADMIN_HTML } from "./ui";
+import { ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { fetchEmbeddedCore } from "./core";
 import { createUpstreamFetch } from "./egress";
 
@@ -182,6 +182,11 @@ export const worker = {
       const url = new URL(request.url);
       if (url.pathname === "/health" && request.method === "GET") {
         return json({ status: "ok" });
+      }
+      if ((url.pathname === "/favicon.svg" || url.pathname === "/favicon.ico") && request.method === "GET") {
+        const headers = secureHeaders("image/svg+xml; charset=utf-8");
+        headers.set("cache-control", "public, max-age=86400");
+        return new Response(FAVICON_SVG, { headers });
       }
       if (url.pathname === "/" && request.method === "GET") {
         const hasUiCookie = parseCookies(request.headers.get("cookie") || "")[UI_COOKIE] === "1";

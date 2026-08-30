@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { worker } from "../src/index";
-import { ADMIN_HTML } from "../src/ui";
+import { ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
 function context() {
   const waits: Promise<unknown>[] = [];
@@ -88,6 +88,17 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain('class="workspace"');
     expect(ADMIN_HTML).toContain('class="logo-mark"');
     expect(ADMIN_HTML).not.toContain('class="topbar"');
+  });
+
+  it("serves the branded SVG favicon with explicit caching", async () => {
+    expect(ADMIN_HTML).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+    expect(FAVICON_SVG).toContain('viewBox="0 0 64 64"');
+    const { env } = environment({ service: async () => new Response("unused") });
+    const response = await worker.fetch(new Request("https://example.test/favicon.svg"), env as never, context().ctx);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=86400");
+    expect(await response.text()).toContain("#0f6cbd");
   });
 
   it("provides navigable account, model, key, and settings sections", () => {
