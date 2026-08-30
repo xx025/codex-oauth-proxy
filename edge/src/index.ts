@@ -1,4 +1,4 @@
-import { AccountPoolCore, PoolError, PoolState, parseImportPayload } from "./pool";
+import { AccountPoolCore, PoolError, PoolSettings, PoolState, parseImportPayload } from "./pool";
 import {
   BrowserLoginSession,
   DeviceLoginSession,
@@ -25,7 +25,6 @@ interface Env {
 const SESSION_COOKIE = "codex_admin";
 const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
-const MAX_ACCOUNT_ATTEMPTS = 3;
 const encoder = new TextEncoder();
 
 export class AccountPool implements DurableObject {
@@ -59,6 +58,12 @@ export class AccountPool implements DurableObject {
       }
       if (url.pathname === "/accounts/usage" && request.method === "POST") {
         return json({ accounts: await this.core.refreshUsage() });
+      }
+      if (url.pathname === "/settings" && request.method === "GET") {
+        return json({ settings: await this.core.getSettings() });
+      }
+      if (url.pathname === "/settings" && request.method === "PATCH") {
+        return json({ settings: await this.core.updateSettings(await request.json()) });
       }
       if (url.pathname === "/oauth/device/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
@@ -249,8 +254,9 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   const excluded: string[] = [];
   let lastResponse: Response | undefined;
+  const settings = await loadPoolSettings(env);
 
-  for (let attempt = 0; attempt < MAX_ACCOUNT_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {
     let account: { id: string; accessToken: string; accountId: string };
     try {
       account = await selectAccount(env, excluded);
@@ -275,7 +281,7 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
     const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
-    if (!shouldFailover || attempt === MAX_ACCOUNT_ATTEMPTS - 1) {
+    if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
       ctx.waitUntil(report);
       return stripInternalHeaders(response);
     }
@@ -284,6 +290,15 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     response.body?.cancel().catch(() => undefined);
   }
   return lastResponse ? stripInternalHeaders(lastResponse) : json({ error: "No healthy accounts available" }, 503);
+}
+
+async function loadPoolSettings(env: Env): Promise<PoolSettings> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/settings");
+  const result = await response.json() as { settings?: PoolSettings; error?: string };
+  if (!response.ok || !result.settings) {
+    throw new PoolError(response.status, result.error || "Pool settings could not be loaded");
+  }
+  return result.settings;
 }
 
 function fetchCore(env: Env, request: Request, ctx: ExecutionContext): Promise<Response> {

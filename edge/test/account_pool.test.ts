@@ -26,6 +26,22 @@ function durableState() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AccountPool device routes", () => {
+  it("persists runtime settings through Durable Object routes", async () => {
+    const { state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+    } as never);
+    const update = await object.fetch(new Request("https://pool/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ selectionStrategy: "least_failures", maxAccountAttempts: 4 }),
+    }));
+    expect(update.status).toBe(200);
+    expect(await update.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4 } });
+    const read = await object.fetch(new Request("https://pool/settings"));
+    expect(await read.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4 } });
+  });
+
   it("persists a device login server-side, imports tokens, then removes the session", async () => {
     const idToken = jwt({ chatgpt_account_id: "account-device", email: "device@example.com", "https://api.openai.com/auth": { chatgpt_user_id: "user-device" }, exp: 4_000 });
     const accessToken = jwt({ exp: 3_600 });

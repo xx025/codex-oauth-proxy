@@ -22,6 +22,28 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("AccountPoolCore", () => {
+  it("persists validated routing and cooldown settings", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage);
+    expect(await pool.getSettings()).toMatchObject({
+      selectionStrategy: "round_robin",
+      maxAccountAttempts: 3,
+      tokenExpiryBufferMinutes: 60,
+    });
+
+    const settings = await pool.updateSettings({
+      selectionStrategy: "least_failures",
+      maxAccountAttempts: 5,
+      tokenExpiryBufferMinutes: 30,
+      rateLimitCooldownSeconds: 90,
+      authCooldownSeconds: 600,
+      serverErrorCooldownSeconds: 25,
+    });
+    expect(settings).toMatchObject({ selectionStrategy: "least_failures", maxAccountAttempts: 5 });
+    expect(await new AccountPoolCore(storage).getSettings()).toEqual(settings);
+    await expect(pool.updateSettings({ maxAccountAttempts: 11 })).rejects.toMatchObject({ status: 400 });
+  });
+
   it("imports, persists, and never lists tokens", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
@@ -144,6 +166,17 @@ describe("AccountPoolCore", () => {
     expect((await pool.select()).accountId).toBe("b");
     now += 121_000;
     expect((await pool.select()).accountId).toBe("a");
+  });
+
+  it("uses configurable cooldowns and can prioritize accounts with fewer failures", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
+    const first = await pool.importAccount(credential("a"));
+    const second = await pool.importAccount(credential("b"));
+    await pool.updateSettings({ selectionStrategy: "least_failures", rateLimitCooldownSeconds: 120 });
+    await pool.report(first.id, 429);
+    expect(storage.value?.accounts.find((account) => account.id === first.id)?.cooldownUntil).toBe(121_000);
+    expect((await pool.select()).id).toBe(second.id);
   });
 
   it("supports enable, disable, rename, and removal", async () => {

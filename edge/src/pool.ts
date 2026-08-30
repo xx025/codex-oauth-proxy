@@ -50,9 +50,30 @@ export interface AccountUsage {
 export interface PoolState {
   accounts: AccountRecord[];
   cursor: number;
+  settings?: PoolSettings;
   proxyKeyHash?: string;
   proxyKeys?: ProxyKeyRecord[];
 }
+
+export type SelectionStrategy = "round_robin" | "least_failures";
+
+export interface PoolSettings {
+  selectionStrategy: SelectionStrategy;
+  maxAccountAttempts: number;
+  tokenExpiryBufferMinutes: number;
+  rateLimitCooldownSeconds: number;
+  authCooldownSeconds: number;
+  serverErrorCooldownSeconds: number;
+}
+
+export const DEFAULT_POOL_SETTINGS: PoolSettings = {
+  selectionStrategy: "round_robin",
+  maxAccountAttempts: 3,
+  tokenExpiryBufferMinutes: 60,
+  rateLimitCooldownSeconds: 60,
+  authCooldownSeconds: 300,
+  serverErrorCooldownSeconds: 15,
+};
 
 export interface ProxyKeyRecord {
   id: string;
@@ -87,7 +108,6 @@ export interface TokenIdentity {
   principalId: string;
 }
 
-const TOKEN_EXPIRY_BUFFER_MS = 60 * 60 * 1000;
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -111,16 +131,41 @@ export class AccountPoolCore {
     return state.accounts.map(redactAccount);
   }
 
+  async getSettings(): Promise<PoolSettings> {
+    return settingsFor(await this.load());
+  }
+
+  async updateSettings(input: unknown): Promise<PoolSettings> {
+    if (!input || typeof input !== "object") throw new PoolError(400, "Invalid settings payload");
+    const patch = input as Record<string, unknown>;
+    const current = await this.load();
+    const previous = settingsFor(current);
+    const selectionStrategy = patch.selectionStrategy === undefined
+      ? previous.selectionStrategy
+      : parseSelectionStrategy(patch.selectionStrategy);
+    current.settings = {
+      selectionStrategy,
+      maxAccountAttempts: boundedInteger(patch.maxAccountAttempts, previous.maxAccountAttempts, 1, 10, "max account attempts"),
+      tokenExpiryBufferMinutes: boundedInteger(patch.tokenExpiryBufferMinutes, previous.tokenExpiryBufferMinutes, 5, 120, "token refresh window"),
+      rateLimitCooldownSeconds: boundedInteger(patch.rateLimitCooldownSeconds, previous.rateLimitCooldownSeconds, 5, 900, "rate-limit cooldown"),
+      authCooldownSeconds: boundedInteger(patch.authCooldownSeconds, previous.authCooldownSeconds, 30, 1_800, "authentication cooldown"),
+      serverErrorCooldownSeconds: boundedInteger(patch.serverErrorCooldownSeconds, previous.serverErrorCooldownSeconds, 5, 300, "server-error cooldown"),
+    };
+    await this.storage.put(current);
+    return { ...current.settings };
+  }
+
   async refreshUsage(): Promise<AccountMetadata[]> {
     const state = await this.load();
+    const settings = settingsFor(state);
     await Promise.all(state.accounts.map(async (account) => {
       if (!account.enabled) return;
       try {
-        await this.refreshIfNeeded(account);
+        await this.refreshIfNeeded(account, settings);
         let response = await this.fetchUsage(account);
         if (response.status === 401 || response.status === 403) {
           account.expiresAt = 0;
-          await this.refreshIfNeeded(account);
+          await this.refreshIfNeeded(account, settings);
           response = await this.fetchUsage(account);
         }
         if (!response.ok) throw new Error(`Usage endpoint returned HTTP ${response.status}`);
@@ -209,19 +254,26 @@ export class AccountPoolCore {
 
   async select(excluded: string[] = []): Promise<AccountRecord> {
     const state = await this.load();
+    const settings = settingsFor(state);
     const now = this.now();
     const excludedSet = new Set(excluded);
     if (state.accounts.length === 0) throw new PoolError(503, "No accounts configured");
 
-    for (let offset = 0; offset < state.accounts.length; offset += 1) {
-      const index = (state.cursor + offset) % state.accounts.length;
+    const candidateIndexes = Array.from({ length: state.accounts.length }, (_, offset) =>
+      (state.cursor + offset) % state.accounts.length
+    );
+    if (settings.selectionStrategy === "least_failures") {
+      candidateIndexes.sort((left, right) => state.accounts[left].failureCount - state.accounts[right].failureCount);
+    }
+
+    for (const index of candidateIndexes) {
       const account = state.accounts[index];
       if (!account.enabled || account.cooldownUntil > now || excludedSet.has(account.id)) continue;
       try {
-        await this.refreshIfNeeded(account);
+        await this.refreshIfNeeded(account, settings);
       } catch {
         account.failureCount += 1;
-        account.cooldownUntil = now + cooldownFor(account.failureCount, 60);
+        account.cooldownUntil = now + cooldownFor(account.failureCount, settings.authCooldownSeconds);
         account.lastStatus = 401;
         account.updatedAt = now;
         continue;
@@ -243,6 +295,7 @@ export class AccountPoolCore {
 
   async report(id: string, status: number, retryAfterSeconds?: number): Promise<void> {
     const state = await this.load();
+    const settings = settingsFor(state);
     const account = requiredAccount(state, id);
     const now = this.now();
     account.lastStatus = status;
@@ -252,13 +305,13 @@ export class AccountPoolCore {
       account.cooldownUntil = 0;
     } else if (status === 429) {
       account.failureCount += 1;
-      account.cooldownUntil = now + cooldownFor(account.failureCount, retryAfterSeconds ?? 60);
+      account.cooldownUntil = now + cooldownFor(account.failureCount, retryAfterSeconds ?? settings.rateLimitCooldownSeconds);
     } else if (status === 401 || status === 403) {
       account.failureCount += 1;
-      account.cooldownUntil = now + cooldownFor(account.failureCount, 300);
+      account.cooldownUntil = now + cooldownFor(account.failureCount, settings.authCooldownSeconds);
     } else if (status >= 500) {
       account.failureCount += 1;
-      account.cooldownUntil = now + cooldownFor(account.failureCount, 15);
+      account.cooldownUntil = now + cooldownFor(account.failureCount, settings.serverErrorCooldownSeconds);
     }
     await this.storage.put(state);
   }
@@ -320,8 +373,8 @@ export class AccountPoolCore {
     return activeMatch || Boolean(state.proxyKeyHash && constantTimeStringEqual(candidateHash, state.proxyKeyHash));
   }
 
-  private async refreshIfNeeded(account: AccountRecord): Promise<void> {
-    if (account.expiresAt > this.now() + TOKEN_EXPIRY_BUFFER_MS) return;
+  private async refreshIfNeeded(account: AccountRecord, settings: PoolSettings): Promise<void> {
+    if (account.expiresAt > this.now() + settings.tokenExpiryBufferMinutes * 60_000) return;
     const response = await this.oauthFetch(OAUTH_TOKEN_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -458,7 +511,25 @@ function legacyProxyKey(): ProxyKeyMetadata {
 }
 
 function cooldownFor(failureCount: number, baseSeconds: number): number {
-  return Math.min(15 * 60, baseSeconds * 2 ** Math.min(4, Math.max(0, failureCount - 1))) * 1000;
+  return Math.min(60 * 60, baseSeconds * 2 ** Math.min(4, Math.max(0, failureCount - 1))) * 1000;
+}
+
+function settingsFor(state: PoolState): PoolSettings {
+  return { ...DEFAULT_POOL_SETTINGS, ...state.settings };
+}
+
+function parseSelectionStrategy(value: unknown): SelectionStrategy {
+  if (value === "round_robin" || value === "least_failures") return value;
+  throw new PoolError(400, "Invalid account selection strategy");
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number, label: string): number {
+  if (value === undefined) return fallback;
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : NaN;
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new PoolError(400, `Invalid ${label}`);
+  }
+  return parsed;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

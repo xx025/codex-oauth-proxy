@@ -14,6 +14,14 @@ function environment(options: {
   service?: (request: Request) => Promise<Response>;
   accountIds?: string[];
   coreOrigin?: string;
+  settings?: Partial<{
+    selectionStrategy: "round_robin" | "least_failures";
+    maxAccountAttempts: number;
+    tokenExpiryBufferMinutes: number;
+    rateLimitCooldownSeconds: number;
+    authCooldownSeconds: number;
+    serverErrorCooldownSeconds: number;
+  }>;
 }) {
   const accountIds = options.accountIds ?? ["a"];
   const reports: Array<{ id: string; status: number }> = [];
@@ -35,6 +43,15 @@ function environment(options: {
         const { key } = await request.json() as { key?: string };
         return Response.json({ valid: key === "proxy-secret" });
       }
+      if (url.pathname === "/settings") return Response.json({ settings: {
+        selectionStrategy: "round_robin",
+        maxAccountAttempts: 3,
+        tokenExpiryBufferMinutes: 60,
+        rateLimitCooldownSeconds: 60,
+        authCooldownSeconds: 300,
+        serverErrorCooldownSeconds: 15,
+        ...options.settings,
+      } });
       if (url.pathname === "/accounts") return Response.json({ accounts: [{ id: "a", name: "A", accountId: "upstream-a" }] });
       return Response.json({ ok: true });
     },
@@ -116,6 +133,16 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain("可用模型");
     expect(ADMIN_HTML).toContain("Workspace · ");
     expect(ADMIN_HTML).toContain("a.email||a.principalId");
+    expect(ADMIN_HTML).toContain("modelFamily(model)");
+    expect(ADMIN_HTML).toContain('class="model-group"');
+  });
+
+  it("provides editable persisted runtime settings without exposing secrets", () => {
+    expect(ADMIN_HTML).toContain("/admin/api/settings");
+    expect(ADMIN_HTML).toContain("saveSettings()");
+    expect(ADMIN_HTML).toContain('id="selectionStrategy"');
+    expect(ADMIN_HTML).toContain('id="maxAccountAttempts"');
+    expect(ADMIN_HTML).not.toContain('id="keyEncryptionSecret"');
   });
 
   it("offers ChatGPT device login without exposing OAuth tokens to browser code", () => {
@@ -199,6 +226,25 @@ describe("edge worker", () => {
     expect(service).toHaveBeenCalledTimes(2);
     expect(reports).toEqual([{ id: "a", status: 429, retryAfterSeconds: 30 }, { id: "b", status: 200 }]);
     expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it("honors the configured maximum number of account attempts", async () => {
+    const service = vi.fn(async () => new Response("limited", { status: 429 }));
+    const { env, reports } = environment({
+      service,
+      accountIds: ["a", "b"],
+      settings: { maxAccountAttempts: 1 },
+    });
+    const { ctx, waits } = context();
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: "{}",
+    }), env as never, ctx);
+    await Promise.all(waits);
+    expect(response.status).toBe(429);
+    expect(service).toHaveBeenCalledTimes(1);
+    expect(reports).toHaveLength(1);
   });
 
   it("preserves the last upstream error when no failover account remains", async () => {

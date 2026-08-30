@@ -15,7 +15,8 @@ A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Co
 | Automatic refresh without races | A Durable Object serializes account selection and OAuth refreshes, preventing concurrent refresh-token rotation. |
 | Round-robin and failover | Healthy accounts rotate automatically; `401`, `403`, `429`, and `5xx` responses trigger cooldown and retry on another account. |
 | OpenAI-compatible API | Existing clients can use `/v1/models`, `/v1/chat/completions`, and `/v1/responses`, including SSE streaming. |
-| Live models and quotas | The dashboard reads the account's live model entitlements and shows each enabled account's remaining primary and secondary usage windows. |
+| Live models and quotas | The dashboard reads live model entitlements, groups models by family, and shows each enabled account's remaining primary and secondary usage windows. |
+| Editable runtime policy | Change selection strategy, retry count, token refresh window, and status-specific cooldowns from the dashboard; settings persist in the coordinated Durable Object. |
 | Multiple client keys | Generate, review, copy, and revoke independent API keys without exposing OAuth credentials to clients. |
 | Cloudflare-native security | Admin sessions, same-origin checks, secure headers, encrypted recoverable keys, and metadata-only account responses. |
 | One Worker deployment | The TypeScript edge, admin UI, Durable Object, and Go/Wasm transformation core deploy together. |
