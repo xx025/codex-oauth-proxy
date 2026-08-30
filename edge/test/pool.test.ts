@@ -274,7 +274,24 @@ describe("AccountPoolCore", () => {
     await pool.revokeProxyKey(first.metadata.id);
     expect(await pool.verifyProxyKey(first.key)).toBe(false);
     expect(await pool.verifyProxyKey(second.key)).toBe(true);
-    await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({ status: 410 });
+    expect(await pool.listProxyKeys()).toMatchObject([{ name: "Server" }]);
+    expect(storage.value?.proxyKeys).toHaveLength(1);
+    expect(storage.value?.proxyKeys?.[0].id).toBe(second.metadata.id);
+    await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("automatically removes previously revoked proxy keys when listing", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 2_000, "encryption-secret");
+    const active = await pool.generateProxyKey("Active");
+    const revoked = await pool.generateProxyKey("Revoked");
+    const revokedRecord = storage.value?.proxyKeys?.find((record) => record.id === revoked.metadata.id);
+    if (!revokedRecord) throw new Error("Expected generated proxy key");
+    revokedRecord.revokedAt = 1_000;
+
+    expect(await pool.listProxyKeys()).toMatchObject([{ id: active.metadata.id, name: "Active" }]);
+    expect(storage.value?.proxyKeys).toHaveLength(1);
+    expect(storage.value?.proxyKeys?.[0].id).toBe(active.metadata.id);
   });
 
   it("keeps legacy hash-only keys valid and allows revoking them", async () => {

@@ -419,7 +419,13 @@ export class AccountPoolCore {
 
   async listProxyKeys(): Promise<ProxyKeyMetadata[]> {
     const state = await this.load();
-    const keys = (state.proxyKeys ?? []).map(redactProxyKey);
+    const proxyKeys = state.proxyKeys ?? [];
+    const activeKeys = proxyKeys.filter((record) => !record.revokedAt);
+    if (activeKeys.length !== proxyKeys.length) {
+      state.proxyKeys = activeKeys;
+      await this.storage.put(state);
+    }
+    const keys = activeKeys.map(redactProxyKey);
     if (state.proxyKeyHash) keys.unshift(legacyProxyKey());
     return keys;
   }
@@ -460,10 +466,12 @@ export class AccountPoolCore {
       await this.storage.put(state);
       return { ...legacyProxyKey(), revokedAt: this.now() };
     }
-    const record = requiredProxyKey(state, id);
-    record.revokedAt ??= this.now();
+    const index = (state.proxyKeys ?? []).findIndex((record) => record.id === id);
+    if (index < 0) throw new PoolError(404, "Key not found");
+    const [record] = state.proxyKeys!.splice(index, 1);
+    const revoked = { ...redactProxyKey(record), revokedAt: this.now() };
     await this.storage.put(state);
-    return redactProxyKey(record);
+    return revoked;
   }
 
   async verifyProxyKey(key: string): Promise<boolean> {
