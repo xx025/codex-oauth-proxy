@@ -8,6 +8,7 @@ interface Env {
   PROXY_API_KEY?: string;
   ADMIN_EMAIL?: string;
   INTERNAL_PROXY_KEY: string;
+  KEY_ENCRYPTION_SECRET?: string;
   MAX_ACCOUNT_ATTEMPTS?: string;
 }
 
@@ -20,11 +21,11 @@ export class AccountPool implements DurableObject {
   private readonly core: AccountPoolCore;
   private tail: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly state: DurableObjectState) {
+  constructor(private readonly state: DurableObjectState, env: Env) {
     this.core = new AccountPoolCore({
       get: () => this.state.storage.get<PoolState>("pool"),
       put: (value) => this.state.storage.put("pool", value),
-    });
+    }, fetch, Date.now, env.KEY_ENCRYPTION_SECRET || env.INTERNAL_PROXY_KEY);
   }
 
   fetch(request: Request): Promise<Response> {
@@ -61,8 +62,24 @@ export class AccountPool implements DurableObject {
         await this.core.report(report.id, report.status, report.retryAfterSeconds);
         return json({ ok: true });
       }
+      if (url.pathname === "/proxy-keys" && request.method === "GET") {
+        return json({ keys: await this.core.listProxyKeys() });
+      }
+      if (url.pathname === "/proxy-keys" && request.method === "POST") {
+        const { name } = await request.json() as { name?: string };
+        return json(await this.core.generateProxyKey(name), 201);
+      }
+      const keyMatch = url.pathname.match(/^\/proxy-keys\/([^/]+)$/);
+      if (keyMatch && request.method === "DELETE") {
+        return json({ key: await this.core.revokeProxyKey(keyMatch[1]) });
+      }
+      const revealMatch = url.pathname.match(/^\/proxy-keys\/([^/]+)\/reveal$/);
+      if (revealMatch && request.method === "GET") {
+        return json({ key: await this.core.revealProxyKey(revealMatch[1]) });
+      }
       if (url.pathname === "/proxy-key" && request.method === "POST") {
-        return json({ key: await this.core.generateProxyKey() }, 201);
+        const generated = await this.core.generateProxyKey("Legacy client key");
+        return json({ key: generated.key }, 201);
       }
       if (url.pathname === "/verify-proxy" && request.method === "POST") {
         const { key = "" } = await request.json() as { key?: string };

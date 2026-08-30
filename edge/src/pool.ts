@@ -30,7 +30,20 @@ export interface PoolState {
   accounts: AccountRecord[];
   cursor: number;
   proxyKeyHash?: string;
+  proxyKeys?: ProxyKeyRecord[];
 }
+
+export interface ProxyKeyRecord {
+  id: string;
+  name: string;
+  prefix: string;
+  keyHash: string;
+  encryptedKey: string;
+  createdAt: number;
+  revokedAt?: number;
+}
+
+export type ProxyKeyMetadata = Omit<ProxyKeyRecord, "keyHash" | "encryptedKey">;
 
 export interface PoolStorage {
   get(): Promise<PoolState | undefined>;
@@ -60,6 +73,7 @@ export class AccountPoolCore {
     private readonly storage: PoolStorage,
     private readonly oauthFetch: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
+    private readonly encryptionSecret: string = "local-test-encryption-secret",
   ) {}
 
   async list(): Promise<AccountMetadata[]> {
@@ -186,21 +200,52 @@ export class AccountPoolCore {
     await this.storage.put(state);
   }
 
-  async generateProxyKey(): Promise<string> {
+  async listProxyKeys(): Promise<ProxyKeyMetadata[]> {
+    const state = await this.load();
+    return (state.proxyKeys ?? []).map(redactProxyKey);
+  }
+
+  async generateProxyKey(name = "Client key"): Promise<{ key: string; metadata: ProxyKeyMetadata }> {
+    const normalizedName = name.trim();
+    if (!normalizedName || normalizedName.length > 80) throw new PoolError(400, "Invalid key name");
     const state = await this.load();
     const random = new Uint8Array(32);
     crypto.getRandomValues(random);
     const key = `cp_${Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-    state.proxyKeyHash = await sha256(key);
+    const record: ProxyKeyRecord = {
+      id: crypto.randomUUID(),
+      name: normalizedName,
+      prefix: `${key.slice(0, 10)}…${key.slice(-4)}`,
+      keyHash: await sha256(key),
+      encryptedKey: await encryptValue(key, this.encryptionSecret),
+      createdAt: this.now(),
+    };
+    (state.proxyKeys ??= []).push(record);
     await this.storage.put(state);
-    return key;
+    return { key, metadata: redactProxyKey(record) };
+  }
+
+  async revealProxyKey(id: string): Promise<string> {
+    const state = await this.load();
+    const record = requiredProxyKey(state, id);
+    if (record.revokedAt) throw new PoolError(410, "Key is revoked");
+    return decryptValue(record.encryptedKey, this.encryptionSecret);
+  }
+
+  async revokeProxyKey(id: string): Promise<ProxyKeyMetadata> {
+    const state = await this.load();
+    const record = requiredProxyKey(state, id);
+    record.revokedAt ??= this.now();
+    await this.storage.put(state);
+    return redactProxyKey(record);
   }
 
   async verifyProxyKey(key: string): Promise<boolean> {
     if (!key) return false;
     const state = await this.load();
-    if (!state.proxyKeyHash) return false;
-    return constantTimeStringEqual(await sha256(key), state.proxyKeyHash);
+    const candidateHash = await sha256(key);
+    const activeMatch = (state.proxyKeys ?? []).some((record) => !record.revokedAt && constantTimeStringEqual(candidateHash, record.keyHash));
+    return activeMatch || Boolean(state.proxyKeyHash && constantTimeStringEqual(candidateHash, state.proxyKeyHash));
   }
 
   private async refreshIfNeeded(account: AccountRecord): Promise<void> {
@@ -275,6 +320,17 @@ function requiredAccount(state: PoolState, id: string): AccountRecord {
   return account;
 }
 
+function requiredProxyKey(state: PoolState, id: string): ProxyKeyRecord {
+  const record = (state.proxyKeys ?? []).find((candidate) => candidate.id === id);
+  if (!record) throw new PoolError(404, "Key not found");
+  return record;
+}
+
+function redactProxyKey(record: ProxyKeyRecord): ProxyKeyMetadata {
+  const { keyHash: _keyHash, encryptedKey: _encryptedKey, ...metadata } = record;
+  return metadata;
+}
+
 function cooldownFor(failureCount: number, baseSeconds: number): number {
   return Math.min(15 * 60, baseSeconds * 2 ** Math.min(4, Math.max(0, failureCount - 1))) * 1000;
 }
@@ -306,6 +362,45 @@ function jwtExpiry(token: string): number {
 async function sha256(value: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function encryptionKey(secret: string): Promise<CryptoKey> {
+  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`codex-proxy-key:${secret}`));
+  return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function encryptValue(value: string, secret: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    await encryptionKey(secret),
+    new TextEncoder().encode(value),
+  ));
+  return `${base64Url(iv)}.${base64Url(encrypted)}`;
+}
+
+async function decryptValue(value: string, secret: string): Promise<string> {
+  const [ivText, encryptedText] = value.split(".");
+  if (!ivText || !encryptedText) throw new PoolError(500, "Stored key is invalid");
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromBase64Url(ivText) },
+      await encryptionKey(secret),
+      fromBase64Url(encryptedText),
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch {
+    throw new PoolError(500, "Stored key could not be decrypted");
+  }
+}
+
+function base64Url(value: Uint8Array): string {
+  return btoa(String.fromCharCode(...value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0));
 }
 
 function constantTimeStringEqual(left: string, right: string): boolean {

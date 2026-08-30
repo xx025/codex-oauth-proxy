@@ -77,14 +77,28 @@ describe("AccountPoolCore", () => {
     expect(await pool.list()).toEqual([]);
   });
 
-  it("generates proxy keys and stores only their hash", async () => {
+  it("creates, reveals, verifies, and revokes multiple encrypted proxy keys", async () => {
     const storage = new MemoryStorage();
-    const pool = new AccountPoolCore(storage);
-    const key = await pool.generateProxyKey();
-    expect(key).toMatch(/^cp_[0-9a-f]{64}$/);
-    expect(await pool.verifyProxyKey(key)).toBe(true);
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000, "encryption-secret");
+    const first = await pool.generateProxyKey("Desktop");
+    const second = await pool.generateProxyKey("Server");
+    expect(first.key).toMatch(/^cp_[0-9a-f]{64}$/);
+    expect(second.key).not.toBe(first.key);
+    expect(await pool.listProxyKeys()).toMatchObject([
+      { name: "Desktop" },
+      { name: "Server" },
+    ]);
+    expect(await pool.revealProxyKey(first.metadata.id)).toBe(first.key);
+    expect(await pool.verifyProxyKey(first.key)).toBe(true);
+    expect(await pool.verifyProxyKey(second.key)).toBe(true);
     expect(await pool.verifyProxyKey("wrong")).toBe(false);
-    expect(JSON.stringify(storage.value)).not.toContain(key);
+    expect(JSON.stringify(storage.value)).not.toContain(first.key);
+    expect(JSON.stringify(storage.value)).not.toContain(second.key);
+
+    await pool.revokeProxyKey(first.metadata.id);
+    expect(await pool.verifyProxyKey(first.key)).toBe(false);
+    expect(await pool.verifyProxyKey(second.key)).toBe(true);
+    await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({ status: 410 });
   });
 });
 
