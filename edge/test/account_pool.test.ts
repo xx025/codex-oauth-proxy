@@ -61,4 +61,43 @@ describe("AccountPool device routes", () => {
     expect([...values.keys()].some((key) => key.startsWith("device-login:"))).toBe(false);
     expect(JSON.stringify(values.get("pool"))).toContain("refresh-token");
   });
+
+  it("persists a browser PKCE session and imports a pasted localhost callback", async () => {
+    const idToken = jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "account-browser" }, exp: 4_000 });
+    const accessToken = jwt({ exp: 3_600 });
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({
+      id_token: idToken,
+      access_token: accessToken,
+      refresh_token: "refresh-browser",
+    }));
+    vi.stubGlobal("fetch", upstream);
+    const { values, state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+    } as never);
+
+    const start = await object.fetch(new Request("https://pool/oauth/browser/start", {
+      method: "POST",
+      body: JSON.stringify({ name: "回调登录账号" }),
+    }));
+    const started = await start.json() as { login: { id: string; authorizationUrl: string } };
+    const authorization = new URL(started.login.authorizationUrl);
+    expect(start.status).toBe(201);
+    expect(authorization.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+    expect(JSON.stringify(started)).not.toContain("codeVerifier");
+    expect([...values.keys()].some((key) => key.startsWith("browser-login:"))).toBe(true);
+
+    const callbackUrl = `http://localhost:1455/auth/callback?code=auth-code&state=${encodeURIComponent(authorization.searchParams.get("state") ?? "")}`;
+    const complete = await object.fetch(new Request(`https://pool/oauth/browser/${started.login.id}`, {
+      method: "POST",
+      body: JSON.stringify({ callbackUrl }),
+    }));
+    const result = await complete.json() as { status: string; account: Record<string, unknown> };
+    expect(complete.status).toBe(200);
+    expect(result.account.accountId).toBe("account-browser");
+    expect(JSON.stringify(result)).not.toContain("refresh-browser");
+    expect([...values.keys()].some((key) => key.startsWith("browser-login:"))).toBe(false);
+    expect(JSON.stringify(values.get("pool"))).toContain("refresh-browser");
+  });
 });

@@ -199,7 +199,7 @@ npx wrangler deploy
 
 部署后，将 API 域名和管理域名都作为 Custom Domain 绑定到同一个 Worker。在 Zero Trust 中，仅为管理域名创建 Self-hosted Access Application；API 域名不要启用交互式 Access，而是使用本项目生成的 Proxy API Key 保护。
 
-打开 Worker 根目录 `/`，通过 Cloudflare Access 或 `ADMIN_API_KEY` 登录。之后可以生成客户端 API 密钥，并导入 Codex `auth.json`、旧版 Cloudflare 凭据 JSON 或扁平凭据对象。客户端可通过 Bearer Token 或 `X-API-Key` 使用生成的密钥。
+打开 Worker 根目录 `/`，通过 Cloudflare Access 或 `ADMIN_API_KEY` 登录。账号支持三种添加方式：设备码登录；使用 PKCE 浏览器授权并粘贴最终的 `http://localhost:1455/auth/callback?...` URL；手动导入凭据 JSON。复制回调 URL 模式会校验一次性 OAuth `state`，PKCE verifier 仅保存在 Durable Object。之后可在 UI 中生成客户端 API 密钥，客户端通过 Bearer Token 或 `X-API-Key` 使用。
 
 为了控制 Worker 包体积，Cloudflare 构建的 `/mcp` 返回 `501 Not Implemented`；本地 Go 版本仍然完整支持 MCP。
 

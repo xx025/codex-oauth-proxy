@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BROWSER_REDIRECT_URI,
   CODEX_OAUTH_CLIENT_ID,
   OPENAI_AUTH_BASE_URL,
+  beginBrowserLogin,
   beginDeviceLogin,
+  completeBrowserLogin,
   pollDeviceLogin,
+  publicBrowserLogin,
   publicDeviceLogin,
 } from "../src/oauth";
 
@@ -89,5 +93,67 @@ describe("ChatGPT device login", () => {
       status: 409,
       message: "Device code login is not enabled in ChatGPT security settings",
     });
+  });
+});
+
+describe("ChatGPT callback URL login", () => {
+  it("creates a PKCE authorization URL while keeping the verifier server-side", async () => {
+    const session = await beginBrowserLogin(() => 1_000, "远程账号");
+    const authorization = new URL(session.authorizationUrl);
+
+    expect(authorization.origin + authorization.pathname).toBe(`${OPENAI_AUTH_BASE_URL}/oauth/authorize`);
+    expect(authorization.searchParams.get("client_id")).toBe(CODEX_OAUTH_CLIENT_ID);
+    expect(authorization.searchParams.get("redirect_uri")).toBe(BROWSER_REDIRECT_URI);
+    expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authorization.searchParams.get("state")).toBe(session.state);
+    expect(authorization.searchParams.get("code_challenge")).not.toBe(session.codeVerifier);
+    expect(publicBrowserLogin(session)).not.toHaveProperty("codeVerifier");
+    expect(publicBrowserLogin(session)).not.toHaveProperty("state");
+  });
+
+  it("validates the pasted callback state and exchanges its code", async () => {
+    const session = await beginBrowserLogin(() => 1_000, "远程账号");
+    const idToken = jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "account-browser" }, exp: 4_000 });
+    const accessToken = jwt({ exp: 3_600 });
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
+      id_token: idToken,
+      access_token: accessToken,
+      refresh_token: "refresh-browser",
+    }));
+
+    const credentials = await completeBrowserLogin(
+      session,
+      `${BROWSER_REDIRECT_URI}?code=authorization-code&state=${encodeURIComponent(session.state)}`,
+      fetcher as typeof fetch,
+      () => 2_000,
+    );
+    expect(credentials).toEqual({
+      name: "远程账号",
+      accessToken,
+      refreshToken: "refresh-browser",
+      accountId: "account-browser",
+      expiresAt: 3_600_000,
+    });
+    const form = new URLSearchParams(String(fetcher.mock.calls[0][1]?.body));
+    expect(form.get("redirect_uri")).toBe(BROWSER_REDIRECT_URI);
+    expect(form.get("code_verifier")).toBe(session.codeVerifier);
+  });
+
+  it("rejects forged state and non-localhost callback targets before token exchange", async () => {
+    const session = await beginBrowserLogin(() => 1_000);
+    const fetcher = vi.fn();
+    await expect(completeBrowserLogin(
+      session,
+      `${BROWSER_REDIRECT_URI}?code=code&state=forged`,
+      fetcher as typeof fetch,
+      () => 2_000,
+    )).rejects.toMatchObject({ status: 400, message: "OAuth state did not match" });
+    await expect(completeBrowserLogin(
+      session,
+      `https://attacker.test/callback?code=code&state=${session.state}`,
+      fetcher as typeof fetch,
+      () => 2_000,
+    )).rejects.toMatchObject({ status: 400, message: "Invalid callback URL" });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

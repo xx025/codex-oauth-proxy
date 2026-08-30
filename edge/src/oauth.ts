@@ -3,6 +3,24 @@ import { ImportPayload, PoolError } from "./pool";
 export const OPENAI_AUTH_BASE_URL = "https://auth.openai.com";
 export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const DEVICE_LOGIN_TTL_MS = 15 * 60 * 1000;
+export const BROWSER_LOGIN_TTL_MS = 10 * 60 * 1000;
+export const BROWSER_REDIRECT_URI = "http://localhost:1455/auth/callback";
+
+export interface BrowserLoginSession {
+  id: string;
+  name?: string;
+  state: string;
+  codeVerifier: string;
+  authorizationUrl: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface BrowserLoginPublic {
+  id: string;
+  authorizationUrl: string;
+  expiresAt: number;
+}
 
 export interface DeviceLoginSession {
   id: string;
@@ -40,6 +58,60 @@ interface OAuthTokenResponse {
   id_token?: unknown;
   access_token?: unknown;
   refresh_token?: unknown;
+  expires_in?: unknown;
+}
+
+export async function beginBrowserLogin(
+  now: () => number = Date.now,
+  name?: string,
+): Promise<BrowserLoginSession> {
+  const normalizedName = normalizeName(name);
+  const state = randomBase64Url(32);
+  const codeVerifier = randomBase64Url(96);
+  const challengeBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier)));
+  const codeChallenge = base64Url(challengeBytes);
+  const authorization = new URL(`${OPENAI_AUTH_BASE_URL}/oauth/authorize`);
+  authorization.search = new URLSearchParams({
+    client_id: CODEX_OAUTH_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: BROWSER_REDIRECT_URI,
+    scope: "openid email profile offline_access",
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    prompt: "login",
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
+  }).toString();
+  const createdAt = now();
+  return {
+    id: crypto.randomUUID(),
+    name: normalizedName,
+    state,
+    codeVerifier,
+    authorizationUrl: authorization.toString(),
+    createdAt,
+    expiresAt: createdAt + BROWSER_LOGIN_TTL_MS,
+  };
+}
+
+export async function completeBrowserLogin(
+  session: BrowserLoginSession,
+  callbackUrl: string,
+  fetcher: typeof fetch = fetch,
+  now: () => number = Date.now,
+): Promise<ImportPayload> {
+  if (session.expiresAt <= now()) throw new PoolError(410, "Browser login expired; start again");
+  const callback = parseBrowserCallback(callbackUrl);
+  if (callback.searchParams.get("state") !== session.state) throw new PoolError(400, "OAuth state did not match");
+  if (callback.searchParams.get("error")) throw new PoolError(400, "OpenAI authorization was denied");
+  const code = requiredString(callback.searchParams.get("code"));
+  if (!code) throw new PoolError(400, "Callback URL does not contain an authorization code");
+  return exchangeAuthorizationCode(code, session.codeVerifier, BROWSER_REDIRECT_URI, session.name, fetcher, now);
+}
+
+export function publicBrowserLogin(session: BrowserLoginSession): BrowserLoginPublic {
+  return { id: session.id, authorizationUrl: session.authorizationUrl, expiresAt: session.expiresAt };
 }
 
 export async function beginDeviceLogin(
@@ -47,8 +119,7 @@ export async function beginDeviceLogin(
   now: () => number = Date.now,
   name?: string,
 ): Promise<DeviceLoginSession> {
-  const normalizedName = name?.trim();
-  if (normalizedName && normalizedName.length > 80) throw new PoolError(400, "Account name is too long");
+  const normalizedName = normalizeName(name);
   const response = await fetcher(`${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/usercode`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -97,10 +168,29 @@ export async function pollDeviceLogin(
     throw new PoolError(502, "OpenAI returned an incomplete authorization response");
   }
 
+  const credentials = await exchangeAuthorizationCode(
+    code,
+    codeVerifier,
+    `${OPENAI_AUTH_BASE_URL}/deviceauth/callback`,
+    session.name,
+    fetcher,
+    now,
+  );
+  return { pending: false, credentials };
+}
+
+async function exchangeAuthorizationCode(
+  code: string,
+  codeVerifier: string,
+  redirectUri: string,
+  name: string | undefined,
+  fetcher: typeof fetch,
+  now: () => number,
+): Promise<ImportPayload> {
   const form = new URLSearchParams({
     grant_type: "authorization_code",
     code,
-    redirect_uri: `${OPENAI_AUTH_BASE_URL}/deviceauth/callback`,
+    redirect_uri: redirectUri,
     client_id: CODEX_OAUTH_CLIENT_ID,
     code_verifier: codeVerifier,
   });
@@ -114,16 +204,13 @@ export async function pollDeviceLogin(
   const idToken = requiredString(tokens.id_token);
   const accessToken = requiredString(tokens.access_token);
   const refreshToken = requiredString(tokens.refresh_token);
-  const claims = decodeJwt(idToken);
-  const accountId = requiredString(claims.chatgpt_account_id);
-  const expiresAt = jwtExpiry(accessToken) || jwtExpiry(idToken);
+  const accountId = accountIdFromClaims(decodeJwt(idToken)) || accountIdFromClaims(decodeJwt(accessToken));
+  const expiresIn = numberValue(tokens.expires_in);
+  const expiresAt = jwtExpiry(accessToken) || jwtExpiry(idToken) || (expiresIn > 0 ? now() + expiresIn * 1000 : 0);
   if (!idToken || !accessToken || !refreshToken || !accountId || !expiresAt) {
     throw new PoolError(502, "OpenAI returned incomplete account credentials");
   }
-  return {
-    pending: false,
-    credentials: { name: session.name, accessToken, refreshToken, accountId, expiresAt },
-  };
+  return { name, accessToken, refreshToken, accountId, expiresAt };
 }
 
 export function publicDeviceLogin(session: DeviceLoginSession): DeviceLoginPublic {
@@ -143,6 +230,51 @@ function clampInterval(value: unknown): number {
 
 function requiredString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeName(name?: string): string | undefined {
+  const normalized = name?.trim();
+  if (normalized && normalized.length > 80) throw new PoolError(400, "Account name is too long");
+  return normalized || undefined;
+}
+
+function parseBrowserCallback(value: string): URL {
+  const input = value.trim();
+  if (!input || input.length > 8_192) throw new PoolError(400, "Invalid callback URL");
+  try {
+    const parsed = new URL(input);
+    const expected = new URL(BROWSER_REDIRECT_URI);
+    if (parsed.protocol !== expected.protocol || parsed.hostname !== expected.hostname || parsed.port !== expected.port || parsed.pathname !== expected.pathname || parsed.username || parsed.password) {
+      throw new Error("unexpected callback target");
+    }
+    return parsed;
+  } catch {
+    throw new PoolError(400, "Invalid callback URL");
+  }
+}
+
+function randomBase64Url(length: number): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(length)));
+}
+
+function base64Url(value: Uint8Array): string {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function numberValue(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function accountIdFromClaims(claims: Record<string, unknown>): string {
+  const direct = requiredString(claims.chatgpt_account_id);
+  if (direct) return direct;
+  const auth = claims["https://api.openai.com/auth"];
+  return auth && typeof auth === "object"
+    ? requiredString((auth as Record<string, unknown>).chatgpt_account_id)
+    : "";
 }
 
 async function safeJson<T>(response: Response): Promise<T> {

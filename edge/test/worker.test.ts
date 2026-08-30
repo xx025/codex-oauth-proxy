@@ -112,6 +112,14 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).not.toContain("deviceAuthId");
     expect(ADMIN_HTML).not.toContain("/oauth/token");
   });
+
+  it("offers PKCE callback URL login as a device-code fallback", () => {
+    expect(ADMIN_HTML).toContain("复制链接登录");
+    expect(ADMIN_HTML).toContain("/admin/api/oauth/browser/start");
+    expect(ADMIN_HTML).toContain("http://localhost:1455/auth/callback?code=");
+    expect(ADMIN_HTML).toContain("完成导入");
+    expect(ADMIN_HTML).not.toContain("codeVerifier");
+  });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
     const proxyResponse = await worker.fetch(new Request("https://example.test/v1/models"), env as never, context().ctx);

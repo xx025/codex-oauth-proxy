@@ -1,5 +1,14 @@
 import { AccountPoolCore, PoolError, PoolState, parseImportPayload } from "./pool";
-import { DeviceLoginSession, beginDeviceLogin, pollDeviceLogin, publicDeviceLogin } from "./oauth";
+import {
+  BrowserLoginSession,
+  DeviceLoginSession,
+  beginBrowserLogin,
+  beginDeviceLogin,
+  completeBrowserLogin,
+  pollDeviceLogin,
+  publicBrowserLogin,
+  publicDeviceLogin,
+} from "./oauth";
 import { ADMIN_HTML } from "./ui";
 import { fetchEmbeddedCore } from "./core";
 import { createUpstreamFetch } from "./egress";
@@ -57,6 +66,28 @@ export class AccountPool implements DurableObject {
         const session = await beginDeviceLogin(this.upstreamFetch, Date.now, name);
         await this.state.storage.put(this.deviceLoginKey(session.id), session);
         return json({ login: publicDeviceLogin(session) }, 201);
+      }
+      if (url.pathname === "/oauth/browser/start" && request.method === "POST") {
+        const { name } = await request.json() as { name?: string };
+        await this.pruneBrowserLogins();
+        const session = await beginBrowserLogin(Date.now, name);
+        await this.state.storage.put(this.browserLoginKey(session.id), session);
+        return json({ login: publicBrowserLogin(session) }, 201);
+      }
+      const browserMatch = url.pathname.match(/^\/oauth\/browser\/([0-9a-f-]+)$/i);
+      if (browserMatch && request.method === "POST") {
+        const key = this.browserLoginKey(browserMatch[1]);
+        const session = await this.state.storage.get<BrowserLoginSession>(key);
+        if (!session) throw new PoolError(404, "Browser login session not found");
+        const { callbackUrl } = await request.json() as { callbackUrl?: string };
+        const credentials = await completeBrowserLogin(session, callbackUrl ?? "", this.upstreamFetch);
+        const account = await this.core.importAccount(credentials);
+        await this.state.storage.delete(key);
+        return json({ status: "complete", account });
+      }
+      if (browserMatch && request.method === "DELETE") {
+        await this.state.storage.delete(this.browserLoginKey(browserMatch[1]));
+        return json({ ok: true });
       }
       const deviceMatch = url.pathname.match(/^\/oauth\/device\/([0-9a-f-]+)$/i);
       if (deviceMatch && request.method === "POST") {
@@ -124,8 +155,20 @@ export class AccountPool implements DurableObject {
     return `device-login:${id}`;
   }
 
+  private browserLoginKey(id: string): string {
+    return `browser-login:${id}`;
+  }
+
   private async pruneDeviceLogins(): Promise<void> {
     const sessions = await this.state.storage.list<DeviceLoginSession>({ prefix: "device-login:" });
+    const expired = [...sessions.entries()]
+      .filter(([, session]) => session.expiresAt <= Date.now())
+      .map(([key]) => key);
+    if (expired.length) await this.state.storage.delete(expired);
+  }
+
+  private async pruneBrowserLogins(): Promise<void> {
+    const sessions = await this.state.storage.list<BrowserLoginSession>({ prefix: "browser-login:" });
     const expired = [...sessions.entries()]
       .filter(([, session]) => session.expiresAt <= Date.now())
       .map(([key]) => key);
