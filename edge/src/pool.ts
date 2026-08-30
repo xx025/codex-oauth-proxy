@@ -29,6 +29,7 @@ export interface AccountMetadata {
 export interface PoolState {
   accounts: AccountRecord[];
   cursor: number;
+  proxyKeyHash?: string;
 }
 
 export interface PoolStorage {
@@ -185,6 +186,23 @@ export class AccountPoolCore {
     await this.storage.put(state);
   }
 
+  async generateProxyKey(): Promise<string> {
+    const state = await this.load();
+    const random = new Uint8Array(32);
+    crypto.getRandomValues(random);
+    const key = `cp_${Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    state.proxyKeyHash = await sha256(key);
+    await this.storage.put(state);
+    return key;
+  }
+
+  async verifyProxyKey(key: string): Promise<boolean> {
+    if (!key) return false;
+    const state = await this.load();
+    if (!state.proxyKeyHash) return false;
+    return constantTimeStringEqual(await sha256(key), state.proxyKeyHash);
+  }
+
   private async refreshIfNeeded(account: AccountRecord): Promise<void> {
     if (account.expiresAt > this.now() + TOKEN_EXPIRY_BUFFER_MS) return;
     const response = await this.oauthFetch(OAUTH_TOKEN_URL, {
@@ -283,4 +301,18 @@ function jwtExpiry(token: string): number {
   } catch {
     return 0;
   }
+}
+
+async function sha256(value: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function constantTimeStringEqual(left: string, right: string): boolean {
+  const length = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
+  return difference === 0;
 }

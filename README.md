@@ -136,9 +136,10 @@ The Cloudflare deployment uses two Workers:
 
 OAuth credentials live only in Durable Object storage. The edge Worker passes one selected access token to the core Worker through a Cloudflare service binding protected by an independent internal secret. Account list responses contain metadata only. Refreshes happen inside the Durable Object before expiry, so concurrent Worker isolates cannot rotate the same refresh token at the same time.
 
-Required secrets:
+Optional fallback secrets:
 
-- Edge Worker: `ADMIN_API_KEY`, `PROXY_API_KEY`, and `INTERNAL_PROXY_KEY`
+- Edge Worker: `ADMIN_API_KEY` and `PROXY_API_KEY`. With Cloudflare Access enabled, the admin key is unnecessary; a proxy key can be generated from the UI and only its hash is stored.
+- Edge Worker always requires `INTERNAL_PROXY_KEY`.
 - Core Worker: `ADMIN_API_KEY` and `INTERNAL_PROXY_KEY`, both set to the same value as the edge Worker's `INTERNAL_PROXY_KEY`
 
 Deploy the core before the edge so the service binding can resolve:
@@ -155,7 +156,7 @@ npx wrangler secret put INTERNAL_PROXY_KEY
 npx wrangler deploy
 ```
 
-Open `/admin`, sign in with `ADMIN_API_KEY`, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints use `PROXY_API_KEY` as a bearer token or `X-API-Key`.
+Open `/admin`, authenticate through Cloudflare Access (or the optional `ADMIN_API_KEY` fallback), generate a proxy API key, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints accept the generated key as a bearer token or `X-API-Key`.
 
 The Cloudflare build returns `501 Not Implemented` for `/mcp` to stay within the 3 MiB free-plan Worker limit. The local Go binary retains full MCP support.
 

@@ -76,6 +76,16 @@ describe("AccountPoolCore", () => {
     await pool.remove(account.id);
     expect(await pool.list()).toEqual([]);
   });
+
+  it("generates proxy keys and stores only their hash", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage);
+    const key = await pool.generateProxyKey();
+    expect(key).toMatch(/^cp_[0-9a-f]{64}$/);
+    expect(await pool.verifyProxyKey(key)).toBe(true);
+    expect(await pool.verifyProxyKey("wrong")).toBe(false);
+    expect(JSON.stringify(storage.value)).not.toContain(key);
+  });
 });
 
 describe("parseImportPayload", () => {

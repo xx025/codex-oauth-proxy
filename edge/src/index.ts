@@ -4,8 +4,9 @@ import { ADMIN_HTML } from "./ui";
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace;
   PROXY_SERVICE: Fetcher;
-  ADMIN_API_KEY: string;
-  PROXY_API_KEY: string;
+  ADMIN_API_KEY?: string;
+  PROXY_API_KEY?: string;
+  ADMIN_EMAIL?: string;
   INTERNAL_PROXY_KEY: string;
   MAX_ACCOUNT_ATTEMPTS?: string;
 }
@@ -59,6 +60,13 @@ export class AccountPool implements DurableObject {
         await this.core.report(report.id, report.status, report.retryAfterSeconds);
         return json({ ok: true });
       }
+      if (url.pathname === "/proxy-key" && request.method === "POST") {
+        return json({ key: await this.core.generateProxyKey() }, 201);
+      }
+      if (url.pathname === "/verify-proxy" && request.method === "POST") {
+        const { key = "" } = await request.json() as { key?: string };
+        return json({ valid: await this.core.verifyProxyKey(key) });
+      }
       return json({ error: "Not found" }, 404);
     } catch (error) {
       return errorResponse(error);
@@ -80,7 +88,7 @@ export const worker = {
         return await handleAdmin(request, env);
       }
       if (!isProxyRoute(url.pathname)) return json({ error: "Not found" }, 404);
-      if (!await validBearer(request, env.PROXY_API_KEY)) return json({ error: "Unauthorized" }, 401);
+      if (!await validProxyAuth(request, env)) return json({ error: "Unauthorized" }, 401);
       return await proxyWithFailover(request, env, ctx);
     } catch (error) {
       return errorResponse(error);
@@ -95,8 +103,10 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/admin/api/session" && request.method === "POST") {
     enforceSameOrigin(request);
     const { key } = await request.json() as { key?: string };
-    if (!key || !await constantTimeEqual(key, env.ADMIN_API_KEY)) return json({ error: "Unauthorized" }, 401);
-    const cookie = await createSessionCookie(env.ADMIN_API_KEY);
+    const accessIdentity = await validAccessIdentity(request, env.ADMIN_EMAIL);
+    const keyIdentity = Boolean(key && env.ADMIN_API_KEY && await constantTimeEqual(key, env.ADMIN_API_KEY));
+    if (!accessIdentity && !keyIdentity) return json({ error: "Unauthorized" }, 401);
+    const cookie = await createSessionCookie(env.INTERNAL_PROXY_KEY);
     return json({ ok: true }, 200, { "set-cookie": cookie });
   }
   if (url.pathname === "/admin/api/session" && request.method === "DELETE") {
@@ -105,7 +115,7 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
       "set-cookie": `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/admin; Max-Age=0`,
     });
   }
-  if (!await validAdmin(request, env.ADMIN_API_KEY)) return json({ error: "Unauthorized" }, 401);
+  if (!await validAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
   if (request.method !== "GET") enforceSameOrigin(request);
 
   const stub = accountPoolStub(env);
@@ -184,18 +194,32 @@ function isProxyRoute(pathname: string): boolean {
     pathname === "/v1/models" || pathname === "/mcp" || pathname.startsWith("/mcp/");
 }
 
-async function validAdmin(request: Request, secret: string): Promise<boolean> {
+async function validAdmin(request: Request, env: Env): Promise<boolean> {
+  if (await validAccessIdentity(request, env.ADMIN_EMAIL)) return true;
   const auth = request.headers.get("authorization");
-  if (auth?.toLowerCase().startsWith("bearer ") && await constantTimeEqual(auth.slice(7), secret)) return true;
+  if (env.ADMIN_API_KEY && auth?.toLowerCase().startsWith("bearer ") && await constantTimeEqual(auth.slice(7), env.ADMIN_API_KEY)) return true;
   const cookie = parseCookies(request.headers.get("cookie") || "")[SESSION_COOKIE];
-  return cookie ? verifySessionCookie(cookie, secret) : false;
+  return cookie ? verifySessionCookie(cookie, env.INTERNAL_PROXY_KEY) : false;
 }
 
-async function validBearer(request: Request, secret: string): Promise<boolean> {
-  if (!secret) return false;
+async function validProxyAuth(request: Request, env: Env): Promise<boolean> {
   const auth = request.headers.get("authorization");
   const candidate = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7) : request.headers.get("x-api-key") || "";
-  return candidate !== "" && await constantTimeEqual(candidate, secret);
+  if (!candidate) return false;
+  if (env.PROXY_API_KEY && await constantTimeEqual(candidate, env.PROXY_API_KEY)) return true;
+  const response = await accountPoolStub(env).fetch("https://account-pool/verify-proxy", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: candidate }),
+  });
+  const result = await response.json() as { valid?: boolean };
+  return response.ok && result.valid === true;
+}
+
+async function validAccessIdentity(request: Request, adminEmail?: string): Promise<boolean> {
+  if (!adminEmail) return false;
+  const email = request.headers.get("cf-access-authenticated-user-email") || "";
+  return email !== "" && await constantTimeEqual(email.toLowerCase(), adminEmail.toLowerCase());
 }
 
 async function constantTimeEqual(left: string, right: string): Promise<boolean> {
