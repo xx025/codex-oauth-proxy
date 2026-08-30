@@ -6,6 +6,8 @@ export interface AccountRecord {
   refreshToken: string;
   expiresAt: number;
   accountId: string;
+  email?: string;
+  principalId: string;
   createdAt: number;
   updatedAt: number;
   cooldownUntil: number;
@@ -19,6 +21,8 @@ export interface AccountMetadata {
   name: string;
   enabled: boolean;
   accountId: string;
+  email?: string;
+  principalId: string;
   expiresAt: number;
   createdAt: number;
   updatedAt: number;
@@ -73,6 +77,14 @@ export interface ImportPayload {
   refreshToken: string;
   expiresAt: number;
   accountId: string;
+  email?: string;
+  principalId: string;
+}
+
+export interface TokenIdentity {
+  accountId: string;
+  email?: string;
+  principalId: string;
 }
 
 const TOKEN_EXPIRY_BUFFER_MS = 60 * 60 * 1000;
@@ -130,9 +142,13 @@ export class AccountPoolCore {
     validateImport(payload);
     const state = await this.load();
     const now = this.now();
-    const existing = state.accounts.find((account) => account.accountId === payload.accountId);
+    const existing = state.accounts.find((account) =>
+      account.accountId === payload.accountId && account.principalId === payload.principalId
+    );
     if (existing) {
       existing.name = payload.name?.trim() || existing.name;
+      existing.email = payload.email;
+      existing.principalId = payload.principalId;
       existing.accessToken = payload.accessToken;
       existing.refreshToken = payload.refreshToken;
       existing.expiresAt = payload.expiresAt;
@@ -147,12 +163,14 @@ export class AccountPoolCore {
 
     const account: AccountRecord = {
       id: crypto.randomUUID(),
-      name: payload.name?.trim() || `Account ${state.accounts.length + 1}`,
+      name: payload.name?.trim() || payload.email || `Account ${state.accounts.length + 1}`,
       enabled: true,
       accessToken: payload.accessToken,
       refreshToken: payload.refreshToken,
       expiresAt: payload.expiresAt,
       accountId: payload.accountId,
+      email: payload.email,
+      principalId: payload.principalId,
       createdAt: now,
       updatedAt: now,
       cooldownUntil: 0,
@@ -352,25 +370,59 @@ export function parseImportPayload(input: unknown): ImportPayload {
   const tokens = objectValue(root.tokens);
   const claude = objectValue(root.claudeAiOauth);
   const source = tokens ?? claude ?? root;
-  const accessToken = stringValue(source.access_token) || stringValue(source.accessToken) || stringValue(source.id_token);
+  const idToken = stringValue(source.id_token) || stringValue(source.idToken);
+  const accessToken = stringValue(source.access_token) || stringValue(source.accessToken);
   const refreshToken = stringValue(source.refresh_token) || stringValue(source.refreshToken);
-  const accountId = stringValue(source.account_id) || stringValue(source.accountId) ||
-    stringValue(root.userID) || stringValue(root.accountId);
+  const identity = tokenIdentity(idToken, accessToken);
+  const accountId = stringValue(source.account_id) || stringValue(source.accountId) || identity.accountId;
+  const email = normalizeEmail(stringValue(source.email) || stringValue(root.email) || identity.email || "");
+  const principalId = stringValue(source.principal_id) || stringValue(source.principalId) ||
+    stringValue(source.chatgpt_user_id) || stringValue(source.user_id) || identity.principalId;
   const expiresAt = numberValue(source.expiresAt) || numberValue(source.expires_at) || jwtExpiry(accessToken);
   return {
     name: stringValue(root.name),
     accessToken,
     refreshToken,
     accountId,
+    email: email || undefined,
+    principalId,
     expiresAt,
   };
 }
 
+export function tokenIdentity(idToken: string, accessToken: string): TokenIdentity {
+  const claims = [decodeJwt(idToken), decodeJwt(accessToken)];
+  const authClaims = claims.map((claim) => objectValue(claim["https://api.openai.com/auth"]));
+  const profiles = claims.map((claim) => objectValue(claim["https://api.openai.com/profile"]));
+  const accountId = firstString(
+    ...claims.map((claim) => claim.chatgpt_account_id),
+    ...authClaims.map((auth) => auth?.chatgpt_account_id),
+  );
+  const email = normalizeEmail(firstString(
+    ...claims.map((claim) => claim.email),
+    ...profiles.map((profile) => profile?.email),
+    ...authClaims.map((auth) => auth?.email),
+  ));
+  const principalId = firstString(
+    ...authClaims.map((auth) => auth?.chatgpt_user_id),
+    ...claims.map((claim) => claim.chatgpt_user_id),
+    ...authClaims.map((auth) => auth?.user_id),
+    ...claims.map((claim) => claim.user_id),
+    ...authClaims.map((auth) => auth?.chatgpt_account_user_id),
+    ...claims.map((claim) => claim.chatgpt_account_user_id),
+    ...claims.map((claim) => claim.sub),
+    email,
+  );
+  return { accountId, email: email || undefined, principalId };
+}
+
 function validateImport(payload: ImportPayload): void {
-  if (!payload.accessToken || !payload.refreshToken || !payload.accountId || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= 0) {
-    throw new PoolError(400, "Credentials require access token, refresh token, account ID, and expiry");
+  if (!payload.accessToken || !payload.refreshToken || !payload.accountId || !payload.principalId || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= 0) {
+    throw new PoolError(400, "Credentials require access token, refresh token, workspace account ID, user identity, and expiry");
   }
   if (payload.name && payload.name.length > 80) throw new PoolError(400, "Account name is too long");
+  if (payload.email && payload.email.length > 320) throw new PoolError(400, "Account email is too long");
+  if (payload.principalId.length > 512) throw new PoolError(400, "Account identity is too long");
 }
 
 function redactAccount(account: AccountRecord): AccountMetadata {
@@ -415,6 +467,18 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    const candidate = stringValue(value);
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function numberValue(value: unknown): number {
@@ -462,14 +526,19 @@ function safeUsageError(error: unknown): string {
 }
 
 function jwtExpiry(token: string): number {
+  const exp = decodeJwt(token).exp;
+  return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : 0;
+}
+
+function decodeJwt(token: string): Record<string, unknown> {
   try {
     const part = token.split(".")[1];
-    if (!part) return 0;
-    const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
-    const parsed = JSON.parse(atob(normalized)) as { exp?: number };
-    return typeof parsed.exp === "number" ? parsed.exp * 1000 : 0;
+    if (!part) return {};
+    const normalized = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
+    const parsed = JSON.parse(atob(normalized));
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
   } catch {
-    return 0;
+    return {};
   }
 }
 

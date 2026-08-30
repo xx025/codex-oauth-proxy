@@ -27,7 +27,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("AccountPool device routes", () => {
   it("persists a device login server-side, imports tokens, then removes the session", async () => {
-    const idToken = jwt({ chatgpt_account_id: "account-device", exp: 4_000 });
+    const idToken = jwt({ chatgpt_account_id: "account-device", email: "device@example.com", "https://api.openai.com/auth": { chatgpt_user_id: "user-device" }, exp: 4_000 });
     const accessToken = jwt({ exp: 3_600 });
     const upstream = vi.fn()
       .mockResolvedValueOnce(Response.json({ device_auth_id: "private-handle", user_code: "CODE-1234", interval: "3" }))
@@ -57,13 +57,15 @@ describe("AccountPool device routes", () => {
     const result = await complete.json() as { status: string; account: Record<string, unknown> };
     expect(result.status).toBe("complete");
     expect(result.account.accountId).toBe("account-device");
+    expect(result.account.email).toBe("device@example.com");
+    expect(result.account.principalId).toBe("user-device");
     expect(JSON.stringify(result)).not.toContain("refresh-token");
     expect([...values.keys()].some((key) => key.startsWith("device-login:"))).toBe(false);
     expect(JSON.stringify(values.get("pool"))).toContain("refresh-token");
   });
 
   it("persists a browser PKCE session and imports a pasted localhost callback", async () => {
-    const idToken = jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "account-browser" }, exp: 4_000 });
+    const idToken = jwt({ email: "browser@example.com", "https://api.openai.com/auth": { chatgpt_account_id: "account-browser", chatgpt_user_id: "user-browser" }, exp: 4_000 });
     const accessToken = jwt({ exp: 3_600 });
     const upstream = vi.fn().mockResolvedValueOnce(Response.json({
       id_token: idToken,
@@ -96,6 +98,8 @@ describe("AccountPool device routes", () => {
     const result = await complete.json() as { status: string; account: Record<string, unknown> };
     expect(complete.status).toBe(200);
     expect(result.account.accountId).toBe("account-browser");
+    expect(result.account.email).toBe("browser@example.com");
+    expect(result.account.principalId).toBe("user-browser");
     expect(JSON.stringify(result)).not.toContain("refresh-browser");
     expect([...values.keys()].some((key) => key.startsWith("browser-login:"))).toBe(false);
     expect(JSON.stringify(values.get("pool"))).toContain("refresh-browser");

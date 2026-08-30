@@ -1,4 +1,4 @@
-import { ImportPayload, PoolError } from "./pool";
+import { ImportPayload, PoolError, tokenIdentity } from "./pool";
 
 export const OPENAI_AUTH_BASE_URL = "https://auth.openai.com";
 export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -204,13 +204,21 @@ async function exchangeAuthorizationCode(
   const idToken = requiredString(tokens.id_token);
   const accessToken = requiredString(tokens.access_token);
   const refreshToken = requiredString(tokens.refresh_token);
-  const accountId = accountIdFromClaims(decodeJwt(idToken)) || accountIdFromClaims(decodeJwt(accessToken));
+  const identity = tokenIdentity(idToken, accessToken);
   const expiresIn = numberValue(tokens.expires_in);
   const expiresAt = jwtExpiry(accessToken) || jwtExpiry(idToken) || (expiresIn > 0 ? now() + expiresIn * 1000 : 0);
-  if (!idToken || !accessToken || !refreshToken || !accountId || !expiresAt) {
+  if (!idToken || !accessToken || !refreshToken || !identity.accountId || !identity.principalId || !expiresAt) {
     throw new PoolError(502, "OpenAI returned incomplete account credentials");
   }
-  return { name, accessToken, refreshToken, accountId, expiresAt };
+  return {
+    name,
+    accessToken,
+    refreshToken,
+    accountId: identity.accountId,
+    email: identity.email,
+    principalId: identity.principalId,
+    expiresAt,
+  };
 }
 
 export function publicDeviceLogin(session: DeviceLoginSession): DeviceLoginPublic {
@@ -266,15 +274,6 @@ function base64Url(value: Uint8Array): string {
 function numberValue(value: unknown): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function accountIdFromClaims(claims: Record<string, unknown>): string {
-  const direct = requiredString(claims.chatgpt_account_id);
-  if (direct) return direct;
-  const auth = claims["https://api.openai.com/auth"];
-  return auth && typeof auth === "object"
-    ? requiredString((auth as Record<string, unknown>).chatgpt_account_id)
-    : "";
 }
 
 async function safeJson<T>(response: Response): Promise<T> {

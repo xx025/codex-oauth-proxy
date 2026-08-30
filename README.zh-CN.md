@@ -11,7 +11,7 @@
 
 | 能力 | 带来的价值 |
 | --- | --- |
-| 多账号池 | 在 Fluent 风格的管理面板中导入、重命名、启用、停用和删除多个 Codex 账号。 |
+| 多账号池 | 在 Fluent 风格面板中管理多个 Codex 账号；即使多人属于同一个 Team 工作区，也会通过 JWT 用户身份避免 `account_id` 冲突，并用邮箱清晰区分成员。 |
 | 无竞争自动刷新 | Durable Object 串行化账号选择和 OAuth 刷新，避免并发请求重复轮换 Refresh Token。 |
 | 轮询与故障转移 | 健康账号自动轮询；遇到 `401`、`403`、`429` 和 `5xx` 时进入冷却并尝试其他账号。 |
 | OpenAI API 兼容 | 支持 `/v1/models`、`/v1/chat/completions` 和 `/v1/responses`，包括 SSE 流式响应。 |
@@ -61,6 +61,8 @@ OpenAI 兼容客户端
 ```
 
 OAuth Access Token、Refresh Token 和账号 ID 始终保留在服务端。模型与额度查询同样由服务端经选定 Tunnel 完成；浏览器只能获得模型元数据、剩余百分比、重置时间和经过脱敏的账号元数据。
+
+每个账号以“Team 工作区 ID + OAuth JWT 中的稳定用户标识”作为唯一身份。工作区 `account_id` 只负责上游路由和额度查询，邮箱用于管理界面辨认用户；无法取得用户 ID 或邮箱的凭据会被拒绝，避免误覆盖同一 Team 下的其他成员。
 
 ## 推荐的域名与 Access 布局
 

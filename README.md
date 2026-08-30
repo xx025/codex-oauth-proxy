@@ -11,7 +11,7 @@ A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Co
 
 | Capability | What you gain |
 | --- | --- |
-| Multi-account pool | Import, rename, enable, disable, and remove multiple Codex accounts from one Fluent-style dashboard. |
+| Multi-account pool | Import, rename, enable, disable, and remove multiple Codex accounts—even when several users share the same Team workspace. JWT user identity prevents `account_id` collisions, while email makes each member recognizable in the dashboard. |
 | Automatic refresh without races | A Durable Object serializes account selection and OAuth refreshes, preventing concurrent refresh-token rotation. |
 | Round-robin and failover | Healthy accounts rotate automatically; `401`, `403`, `429`, and `5xx` responses trigger cooldown and retry on another account. |
 | OpenAI-compatible API | Existing clients can use `/v1/models`, `/v1/chat/completions`, and `/v1/responses`, including SSE streaming. |
@@ -61,6 +61,8 @@ OpenAI client
 ```
 
 OAuth access tokens, refresh tokens, and account IDs stay on the server side. Model and quota lookups also run server-side through the selected Tunnel; the browser receives only model metadata, remaining percentages, reset times, and redacted account metadata.
+
+Accounts are uniquely keyed by both the Team workspace ID and a stable user principal extracted from the OAuth JWT. The workspace `account_id` is used for upstream routing and quota requests, while the user's email is display metadata—not the sole workspace identifier. Imports without a user principal or email are rejected instead of risking an overwrite.
 
 ## Recommended domain and Access layout
 

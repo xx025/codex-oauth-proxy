@@ -51,7 +51,7 @@ describe("ChatGPT device login", () => {
     const session = await beginDeviceLogin(vi.fn(async () => Response.json({
       device_auth_id: "device-id", usercode: "ABCD-EFGH", interval: "5",
     })) as typeof fetch, () => 1_000, "主账号");
-    const idToken = jwt({ chatgpt_account_id: "account-123", exp: 4_000 });
+    const idToken = jwt({ chatgpt_account_id: "account-123", email: "member@example.com", "https://api.openai.com/auth": { chatgpt_user_id: "user-123" }, exp: 4_000 });
     const accessToken = jwt({ exp: 3_600 });
     const fetcher = vi.fn()
       .mockResolvedValueOnce(Response.json({
@@ -73,6 +73,8 @@ describe("ChatGPT device login", () => {
         accessToken,
         refreshToken: "refresh-secret",
         accountId: "account-123",
+        email: "member@example.com",
+        principalId: "user-123",
         expiresAt: 3_600_000,
       },
     });
@@ -113,7 +115,7 @@ describe("ChatGPT callback URL login", () => {
 
   it("validates the pasted callback state and exchanges its code", async () => {
     const session = await beginBrowserLogin(() => 1_000, "远程账号");
-    const idToken = jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "account-browser" }, exp: 4_000 });
+    const idToken = jwt({ email: "browser@example.com", "https://api.openai.com/auth": { chatgpt_account_id: "account-browser", user_id: "user-browser" }, exp: 4_000 });
     const accessToken = jwt({ exp: 3_600 });
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
       id_token: idToken,
@@ -132,6 +134,8 @@ describe("ChatGPT callback URL login", () => {
       accessToken,
       refreshToken: "refresh-browser",
       accountId: "account-browser",
+      email: "browser@example.com",
+      principalId: "user-browser",
       expiresAt: 3_600_000,
     });
     const form = new URLSearchParams(String(fetcher.mock.calls[0][1]?.body));

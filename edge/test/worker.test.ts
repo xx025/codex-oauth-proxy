@@ -114,6 +114,8 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain("剩余额度");
     expect(ADMIN_HTML).toContain("/admin/api/models");
     expect(ADMIN_HTML).toContain("可用模型");
+    expect(ADMIN_HTML).toContain("Workspace · ");
+    expect(ADMIN_HTML).toContain("a.email||a.principalId");
   });
 
   it("offers ChatGPT device login without exposing OAuth tokens to browser code", () => {

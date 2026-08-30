@@ -7,13 +7,19 @@ class MemoryStorage {
   async put(value: PoolState) { this.value = structuredClone(value); }
 }
 
-const credential = (accountId: string, name?: string) => ({
+const credential = (accountId: string, name?: string, principalId = `user-${accountId}`) => ({
   name,
   accessToken: `access-${accountId}`,
   refreshToken: `refresh-${accountId}`,
   expiresAt: 10_000_000,
   accountId,
+  principalId,
 });
+
+function jwt(payload: Record<string, unknown>): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none" })}.${encode(payload)}.signature`;
+}
 
 describe("AccountPoolCore", () => {
   it("imports, persists, and never lists tokens", async () => {
@@ -37,6 +43,48 @@ describe("AccountPoolCore", () => {
     expect((await pool.select()).accountId).toBe("b");
     await pool.update(first.id, { enabled: false });
     expect((await pool.select()).accountId).toBe("b");
+  });
+
+  it("keeps different users in the same Team workspace as separate accounts", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
+    const first = await pool.importAccount({ ...credential("team", "Alice", "user-alice"), email: "alice@example.com" });
+    const second = await pool.importAccount({ ...credential("team", "Bob", "user-bob"), email: "bob@example.com" });
+
+    expect(await pool.list()).toMatchObject([
+      { id: first.id, accountId: "team", principalId: "user-alice", email: "alice@example.com" },
+      { id: second.id, accountId: "team", principalId: "user-bob", email: "bob@example.com" },
+    ]);
+    expect((await pool.select()).principalId).toBe("user-alice");
+    expect((await pool.select()).principalId).toBe("user-bob");
+  });
+
+  it("updates only the matching workspace and user identity on re-import", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
+    const alice = await pool.importAccount({ ...credential("team", "Alice", "user-alice"), email: "alice@example.com" });
+    await pool.importAccount({ ...credential("team", "Bob", "user-bob"), email: "bob@example.com" });
+    const updated = await pool.importAccount({
+      ...credential("team", "Alice Updated", "user-alice"),
+      email: "ALICE@EXAMPLE.COM",
+      accessToken: "rotated-access",
+    });
+
+    expect(updated.id).toBe(alice.id);
+    expect(await pool.list()).toHaveLength(2);
+    expect(storage.value?.accounts.find((account) => account.id === alice.id)?.accessToken).toBe("rotated-access");
+    expect(storage.value?.accounts.find((account) => account.principalId === "user-bob")?.name).toBe("Bob");
+  });
+
+  it("rejects imports that do not contain a stable user identity", async () => {
+    const pool = new AccountPoolCore(new MemoryStorage(), vi.fn(), () => 1_000);
+    await expect(pool.importAccount({
+      accessToken: "access",
+      refreshToken: "refresh",
+      expiresAt: 10_000,
+      accountId: "team",
+      principalId: "",
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it("refreshes expiring credentials and persists rotated refresh tokens", async () => {
@@ -147,19 +195,61 @@ describe("AccountPoolCore", () => {
 
 describe("parseImportPayload", () => {
   it("accepts Codex auth.json", () => {
+    const idToken = jwt({
+      email: "Member@Example.com",
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "account",
+        chatgpt_user_id: "user-member",
+      },
+    });
     expect(parseImportPayload({ tokens: {
+      id_token: idToken,
       access_token: "access",
       refresh_token: "refresh",
-      account_id: "account",
       expiresAt: 1234,
-    } })).toMatchObject({ accessToken: "access", refreshToken: "refresh", accountId: "account", expiresAt: 1234 });
-  });
-
-  it("accepts the legacy Cloudflare credential shape", () => {
-    expect(parseImportPayload({ userID: "account", claudeAiOauth: {
+    } })).toMatchObject({
       accessToken: "access",
       refreshToken: "refresh",
+      accountId: "account",
+      principalId: "user-member",
+      email: "member@example.com",
       expiresAt: 1234,
-    } })).toMatchObject({ accessToken: "access", refreshToken: "refresh", accountId: "account", expiresAt: 1234 });
+    });
+  });
+
+  it("extracts identity and email from access-token claims when no ID token is present", () => {
+    const accessToken = jwt({
+      exp: 10,
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "account",
+        user_id: "user-from-access",
+      },
+      "https://api.openai.com/profile": { email: "access@example.com" },
+    });
+    expect(parseImportPayload({ tokens: {
+      access_token: accessToken,
+      refresh_token: "refresh",
+    } })).toMatchObject({
+      accountId: "account",
+      principalId: "user-from-access",
+      email: "access@example.com",
+      expiresAt: 10_000,
+    });
+  });
+
+  it("prefers a stable ChatGPT user ID over the ID-token subject", () => {
+    const idToken = jwt({ sub: "auth0-subject", email: "member@example.com" });
+    const accessToken = jwt({
+      exp: 10,
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "team",
+        chatgpt_user_id: "chatgpt-user",
+      },
+    });
+    expect(parseImportPayload({ tokens: {
+      id_token: idToken,
+      access_token: accessToken,
+      refresh_token: "refresh",
+    } })).toMatchObject({ principalId: "chatgpt-user", email: "member@example.com" });
   });
 });
