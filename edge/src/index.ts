@@ -1,4 +1,4 @@
-import { AccountPoolCore, PoolError, PoolSettings, PoolState, parseImportPayload } from "./pool";
+import { AccountPoolCore, PoolError, PoolSettings, PoolState, RequestRecordInput, parseImportPayload } from "./pool";
 import {
   BrowserLoginSession,
   DeviceLoginSession,
@@ -12,6 +12,7 @@ import {
 import { ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { fetchEmbeddedCore } from "./core";
 import { createUpstreamFetch } from "./egress";
+import { RequestMetadata, emptyTokenUsage, readTokenUsage, requestMetadata } from "./metrics";
 
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace;
@@ -64,6 +65,13 @@ export class AccountPool implements DurableObject {
       }
       if (url.pathname === "/settings" && request.method === "PATCH") {
         return json({ settings: await this.core.updateSettings(await request.json()) });
+      }
+      if (url.pathname === "/request-stats" && request.method === "GET") {
+        return json(await this.core.requestStats());
+      }
+      if (url.pathname === "/request-records" && request.method === "POST") {
+        await this.core.recordRequest(await request.json());
+        return json({ ok: true }, 201);
       }
       if (url.pathname === "/oauth/device/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
@@ -251,9 +259,11 @@ async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): P
 }
 
 async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const startedAt = Date.now();
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+  const metadata = requestMetadata(new URL(request.url).pathname, requestBody);
   const excluded: string[] = [];
-  let lastResponse: Response | undefined;
+  let lastAttempt: { response: Response; accountId: string } | undefined;
   const settings = await loadPoolSettings(env);
 
   for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {
@@ -261,7 +271,9 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     try {
       account = await selectAccount(env, excluded);
     } catch (error) {
-      if (lastResponse) return stripInternalHeaders(lastResponse);
+      if (lastAttempt) return trackRequestResponse(
+        stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt,
+      );
       throw error;
     }
     excluded.push(account.id);
@@ -283,13 +295,62 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
     if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
       ctx.waitUntil(report);
-      return stripInternalHeaders(response);
+      return trackRequestResponse(stripInternalHeaders(response), env, ctx, metadata, account.id, startedAt);
     }
     await report;
-    lastResponse = response.clone();
+    lastAttempt = { response: response.clone(), accountId: account.id };
     response.body?.cancel().catch(() => undefined);
   }
-  return lastResponse ? stripInternalHeaders(lastResponse) : json({ error: "No healthy accounts available" }, 503);
+  return lastAttempt
+    ? trackRequestResponse(stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt)
+    : json({ error: "No healthy accounts available" }, 503);
+}
+
+function trackRequestResponse(
+  response: Response,
+  env: Env,
+  ctx: ExecutionContext,
+  metadata: RequestMetadata,
+  accountId: string,
+  startedAt: number,
+): Response {
+  const contentType = response.headers.get("content-type") || "";
+  const streaming = metadata.streaming || contentType.toLowerCase().includes("text/event-stream");
+  if (!response.body) {
+    ctx.waitUntil(recordCompletedRequest(env, {
+      ...metadata,
+      streaming,
+      accountId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      usage: emptyTokenUsage(),
+    }));
+    return response;
+  }
+
+  const [clientBody, metricsBody] = response.body.tee();
+  ctx.waitUntil(readTokenUsage(metricsBody, contentType).then((usage) => recordCompletedRequest(env, {
+    ...metadata,
+    streaming,
+    accountId,
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    usage,
+  })));
+  return new Response(clientBody, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+async function recordCompletedRequest(env: Env, record: RequestRecordInput): Promise<void> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/request-records", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(record),
+  });
+  if (!response.ok) throw new Error(`Request metrics storage failed (${response.status})`);
 }
 
 async function loadPoolSettings(env: Env): Promise<PoolSettings> {

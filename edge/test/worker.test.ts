@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { worker } from "../src/index";
+import { RequestRecordInput } from "../src/pool";
 import { ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
 function context() {
@@ -25,6 +26,7 @@ function environment(options: {
 }) {
   const accountIds = options.accountIds ?? ["a"];
   const reports: Array<{ id: string; status: number }> = [];
+  const records: RequestRecordInput[] = [];
   const stub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -39,6 +41,16 @@ function environment(options: {
         reports.push(await request.json() as { id: string; status: number });
         return Response.json({ ok: true });
       }
+      if (url.pathname === "/request-records") {
+        records.push(await request.json() as RequestRecordInput);
+        return Response.json({ ok: true }, { status: 201 });
+      }
+      if (url.pathname === "/request-stats") return Response.json({
+        totals: { requests: records.length, successfulRequests: records.filter((item) => item.status < 400).length, failedRequests: records.filter((item) => item.status >= 400).length, inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, meteredRequests: 0 },
+        models: [],
+        recent: records,
+        retentionLimit: 200,
+      });
       if (url.pathname === "/verify-proxy") {
         const { key } = await request.json() as { key?: string };
         return Response.json({ valid: key === "proxy-secret" });
@@ -58,6 +70,7 @@ function environment(options: {
   };
   return {
     reports,
+    records,
     env: {
       ACCOUNT_POOL: { idFromName: () => ({}) as DurableObjectId, get: () => stub as unknown as DurableObjectStub },
       PROXY_SERVICE: options.service ? { fetch: options.service } : undefined,
@@ -118,12 +131,29 @@ describe("edge worker", () => {
     expect(await response.text()).toContain("#0f6cbd");
   });
 
-  it("provides navigable account, model, key, and settings sections", () => {
-    for (const view of ["home", "accounts", "models", "keys", "settings"]) {
+  it("provides navigable account, model, usage, key, and settings sections", () => {
+    for (const view of ["home", "accounts", "models", "usage", "keys", "settings"]) {
       expect(ADMIN_HTML).toContain(`data-view="${view}"`);
       expect(ADMIN_HTML).toContain(`data-page="${view}"`);
     }
     expect(ADMIN_HTML).toContain("function switchView(view)");
+  });
+
+  it("provides a remembered system, light, and dark theme without a server secret", () => {
+    expect(ADMIN_HTML).toContain('id="themeSelect"');
+    expect(ADMIN_HTML).toContain('<option value="system">跟随系统</option>');
+    expect(ADMIN_HTML).toContain('<option value="dark">深色</option>');
+    expect(ADMIN_HTML).toContain("localStorage.setItem('codex-theme',value)");
+    expect(ADMIN_HTML).toContain('[data-theme=dark]');
+  });
+
+  it("renders request and token analytics without prompt or response content fields", () => {
+    expect(ADMIN_HTML).toContain("/admin/api/request-stats");
+    expect(ADMIN_HTML).toContain("按模型汇总");
+    expect(ADMIN_HTML).toContain("最近请求");
+    expect(ADMIN_HTML).toContain("Total Tokens");
+    expect(ADMIN_HTML).not.toContain('item.prompt');
+    expect(ADMIN_HTML).not.toContain('item.responseBody');
   });
 
   it("renders quota refresh and live model catalog controls", () => {
@@ -214,7 +244,7 @@ describe("edge worker", () => {
         ? new Response("limited", { status: 429, headers: { "retry-after": "30" } })
         : Response.json({ ok: true });
     });
-    const { env, reports } = environment({ service, accountIds: ["a", "b"] });
+    const { env, reports, records } = environment({ service, accountIds: ["a", "b"] });
     const { ctx, waits } = context();
     const response = await worker.fetch(new Request("https://example.test/v1/responses", {
       method: "POST",
@@ -225,6 +255,8 @@ describe("edge worker", () => {
     expect(response.status).toBe(200);
     expect(service).toHaveBeenCalledTimes(2);
     expect(reports).toEqual([{ id: "a", status: 429, retryAfterSeconds: 30 }, { id: "b", status: 200 }]);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ model: "unknown", endpoint: "/v1/responses", status: 200, accountId: "b" });
     expect(await response.json()).toEqual({ ok: true });
   });
 
@@ -257,24 +289,55 @@ describe("edge worker", () => {
     expect(reports).toEqual([{ id: "a", status: 502, retryAfterSeconds: undefined }]);
   });
 
-  it("preserves streaming bodies", async () => {
+  it("preserves streaming bodies and records response usage", async () => {
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("data: one\n\n"));
+        controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15,"input_tokens_details":{"cached_tokens":2}}}}\n\n'));
         controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
         controller.close();
       },
     });
-    const { env } = environment({ service: async () => new Response(stream, { headers: { "content-type": "text/event-stream" } }) });
+    const { env, records } = environment({ service: async () => new Response(stream, { headers: { "content-type": "text/event-stream" } }) });
     const { ctx, waits } = context();
     const response = await worker.fetch(new Request("https://example.test/v1/chat/completions", {
       method: "POST",
       headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
-      body: JSON.stringify({ stream: true }),
+      body: JSON.stringify({ model: "gpt-5.6-sol", stream: true }),
     }), env as never, ctx);
     await Promise.all(waits);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
-    expect(await response.text()).toBe("data: one\n\ndata: [DONE]\n\n");
+    expect(await response.text()).toBe('data: one\n\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":4,"total_tokens":15,"input_tokens_details":{"cached_tokens":2}}}}\n\ndata: [DONE]\n\n');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      model: "gpt-5.6-sol",
+      endpoint: "/v1/chat/completions",
+      status: 200,
+      streaming: true,
+      usage: { inputTokens: 11, outputTokens: 4, totalTokens: 15, cachedTokens: 2, available: true },
+    });
+  });
+
+  it("records non-streaming JSON token usage", async () => {
+    const { env, records } = environment({ service: async () => Response.json({
+      id: "response-id",
+      usage: { input_tokens: 21, output_tokens: 9, total_tokens: 30 },
+    }) });
+    const { ctx, waits } = context();
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.6-terra", input: "not retained" }),
+    }), env as never, ctx);
+    await Promise.all(waits);
+    expect(response.status).toBe(200);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      model: "gpt-5.6-terra",
+      status: 200,
+      usage: { inputTokens: 21, outputTokens: 9, totalTokens: 30, available: true },
+    });
+    expect(JSON.stringify(records)).not.toContain("not retained");
   });
 
   it("passes public API requests to the in-process Core interface", async () => {

@@ -26,6 +26,34 @@ function durableState() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AccountPool device routes", () => {
+  it("persists request records and exposes aggregate statistics", async () => {
+    const { state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+    } as never);
+    const recorded = await object.fetch(new Request("https://pool/request-records", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "gpt-5.6-sol",
+        endpoint: "/v1/responses",
+        status: 200,
+        durationMs: 9,
+        streaming: false,
+        usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6, cachedTokens: 1, available: true },
+      }),
+    }));
+    expect(recorded.status).toBe(201);
+    const response = await object.fetch(new Request("https://pool/request-stats"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      totals: { requests: 1, totalTokens: 6 },
+      models: [{ model: "gpt-5.6-sol", requests: 1, totalTokens: 6 }],
+      recent: [{ model: "gpt-5.6-sol", endpoint: "/v1/responses", status: 200 }],
+      retentionLimit: 200,
+    });
+  });
+
   it("persists runtime settings through Durable Object routes", async () => {
     const { state } = durableState();
     const object = new AccountPool(state, {

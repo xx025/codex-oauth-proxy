@@ -51,6 +51,8 @@ export interface PoolState {
   accounts: AccountRecord[];
   cursor: number;
   settings?: PoolSettings;
+  requestRecords?: RequestRecord[];
+  modelRequestStats?: Record<string, ModelRequestStats>;
   proxyKeyHash?: string;
   proxyKeys?: ProxyKeyRecord[];
 }
@@ -74,6 +76,51 @@ export const DEFAULT_POOL_SETTINGS: PoolSettings = {
   authCooldownSeconds: 300,
   serverErrorCooldownSeconds: 15,
 };
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedTokens: number;
+  available: boolean;
+}
+
+export interface RequestRecordInput {
+  model: string;
+  endpoint: string;
+  status: number;
+  durationMs: number;
+  streaming: boolean;
+  accountId?: string;
+  usage: TokenUsage;
+}
+
+export interface RequestRecord extends RequestRecordInput {
+  id: string;
+  createdAt: number;
+}
+
+export interface ModelRequestStats {
+  model: string;
+  requests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedTokens: number;
+  meteredRequests: number;
+  lastRequestedAt: number;
+}
+
+export interface RequestStatsSnapshot {
+  totals: Omit<ModelRequestStats, "model" | "lastRequestedAt">;
+  models: ModelRequestStats[];
+  recent: RequestRecord[];
+  retentionLimit: number;
+}
+
+const REQUEST_RECORD_LIMIT = 200;
 
 export interface ProxyKeyRecord {
   id: string;
@@ -153,6 +200,60 @@ export class AccountPoolCore {
     };
     await this.storage.put(current);
     return { ...current.settings };
+  }
+
+  async requestStats(): Promise<RequestStatsSnapshot> {
+    const state = await this.load();
+    const models = Object.values(state.modelRequestStats ?? {})
+      .sort((left, right) => right.requests - left.requests || right.lastRequestedAt - left.lastRequestedAt);
+    return {
+      totals: models.reduce((total, model) => ({
+        requests: total.requests + model.requests,
+        successfulRequests: total.successfulRequests + model.successfulRequests,
+        failedRequests: total.failedRequests + model.failedRequests,
+        inputTokens: total.inputTokens + model.inputTokens,
+        outputTokens: total.outputTokens + model.outputTokens,
+        totalTokens: total.totalTokens + model.totalTokens,
+        cachedTokens: total.cachedTokens + model.cachedTokens,
+        meteredRequests: total.meteredRequests + model.meteredRequests,
+      }), emptyRequestTotals()),
+      models,
+      recent: [...(state.requestRecords ?? [])].sort((left, right) => right.createdAt - left.createdAt),
+      retentionLimit: REQUEST_RECORD_LIMIT,
+    };
+  }
+
+  async recordRequest(input: unknown): Promise<void> {
+    const record = validateRequestRecord(input, this.now());
+    const state = await this.load();
+    const records = state.requestRecords ??= [];
+    records.unshift(record);
+    if (records.length > REQUEST_RECORD_LIMIT) records.length = REQUEST_RECORD_LIMIT;
+
+    const stats = state.modelRequestStats ??= {};
+    const modelKey = `model:${record.model}`;
+    const aggregate = stats[modelKey] ??= {
+      model: record.model,
+      requests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      meteredRequests: 0,
+      lastRequestedAt: 0,
+    };
+    aggregate.requests += 1;
+    if (record.status >= 200 && record.status < 400) aggregate.successfulRequests += 1;
+    else aggregate.failedRequests += 1;
+    aggregate.inputTokens += record.usage.inputTokens;
+    aggregate.outputTokens += record.usage.outputTokens;
+    aggregate.totalTokens += record.usage.totalTokens;
+    aggregate.cachedTokens += record.usage.cachedTokens;
+    if (record.usage.available) aggregate.meteredRequests += 1;
+    aggregate.lastRequestedAt = record.createdAt;
+    await this.storage.put(state);
   }
 
   async refreshUsage(): Promise<AccountMetadata[]> {
@@ -530,6 +631,53 @@ function boundedInteger(value: unknown, fallback: number, minimum: number, maxim
     throw new PoolError(400, `Invalid ${label}`);
   }
   return parsed;
+}
+
+function emptyRequestTotals(): Omit<ModelRequestStats, "model" | "lastRequestedAt"> {
+  return {
+    requests: 0,
+    successfulRequests: 0,
+    failedRequests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    meteredRequests: 0,
+  };
+}
+
+function validateRequestRecord(input: unknown, createdAt: number): RequestRecord {
+  const payload = objectValue(input);
+  const model = typeof payload?.model === "string" ? payload.model.trim() || "unknown" : "";
+  const endpoint = typeof payload?.endpoint === "string" ? payload.endpoint.trim() : "";
+  if (!model || !endpoint) throw new PoolError(400, "Invalid request record metadata");
+  if (model.length > 160 || endpoint.length > 80) throw new PoolError(400, "Invalid request record metadata");
+  const status = typeof payload?.status === "number" ? payload.status : NaN;
+  if (!Number.isInteger(status) || status < 100 || status > 599) throw new PoolError(400, "Invalid request status");
+  if (typeof payload?.durationMs !== "number" || !Number.isFinite(payload.durationMs) || payload.durationMs < 0 || payload.durationMs > 86_400_000) throw new PoolError(400, "Invalid request duration");
+  const rawUsage = objectValue(payload.usage);
+  const usage: TokenUsage = {
+    inputTokens: safeTokenCount(rawUsage?.inputTokens),
+    outputTokens: safeTokenCount(rawUsage?.outputTokens),
+    totalTokens: safeTokenCount(rawUsage?.totalTokens),
+    cachedTokens: safeTokenCount(rawUsage?.cachedTokens),
+    available: rawUsage?.available === true,
+  };
+  return {
+    id: crypto.randomUUID(),
+    model,
+    endpoint,
+    status,
+    durationMs: Math.round(payload.durationMs),
+    streaming: payload.streaming === true,
+    accountId: typeof payload.accountId === "string" ? payload.accountId.slice(0, 80) : undefined,
+    usage,
+    createdAt,
+  };
+}
+
+function safeTokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

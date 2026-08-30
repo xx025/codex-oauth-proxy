@@ -44,6 +44,71 @@ describe("AccountPoolCore", () => {
     await expect(pool.updateSettings({ maxAccountAttempts: 11 })).rejects.toMatchObject({ status: 400 });
   });
 
+  it("aggregates request and token usage by model while bounding recent records", async () => {
+    const storage = new MemoryStorage();
+    let now = 1_000;
+    const pool = new AccountPoolCore(storage, vi.fn(), () => now++);
+    await pool.recordRequest({
+      model: "gpt-5.6-sol",
+      endpoint: "/v1/responses",
+      status: 200,
+      durationMs: 125.4,
+      streaming: true,
+      accountId: "internal-account-id",
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedTokens: 3, available: true },
+    });
+    await pool.recordRequest({
+      model: "gpt-5.6-sol",
+      endpoint: "/v1/responses",
+      status: 429,
+      durationMs: 20,
+      streaming: false,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, available: false },
+    });
+
+    const snapshot = await pool.requestStats();
+    expect(snapshot.totals).toMatchObject({
+      requests: 2,
+      successfulRequests: 1,
+      failedRequests: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cachedTokens: 3,
+      meteredRequests: 1,
+    });
+    expect(snapshot.models).toMatchObject([{ model: "gpt-5.6-sol", requests: 2, totalTokens: 15 }]);
+    expect(snapshot.recent).toHaveLength(2);
+    expect(snapshot.recent[0]).toMatchObject({ status: 429, durationMs: 20 });
+
+    for (let index = 0; index < 205; index += 1) {
+      await pool.recordRequest({
+        model: "gpt-5.6-terra",
+        endpoint: "/v1/responses",
+        status: 200,
+        durationMs: 1,
+        streaming: false,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cachedTokens: 0, available: true },
+      });
+    }
+    const bounded = await pool.requestStats();
+    expect(bounded.recent).toHaveLength(200);
+    expect(bounded.retentionLimit).toBe(200);
+    expect(bounded.models.find((model) => model.model === "gpt-5.6-terra")?.requests).toBe(205);
+  });
+
+  it("rejects invalid request record metadata", async () => {
+    const pool = new AccountPoolCore(new MemoryStorage());
+    await expect(pool.recordRequest({
+      model: "x".repeat(161),
+      endpoint: "/v1/responses",
+      status: 200,
+      durationMs: 1,
+      streaming: false,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, available: false },
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
   it("imports, persists, and never lists tokens", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);

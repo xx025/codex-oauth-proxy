@@ -16,6 +16,8 @@ A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Co
 | Round-robin and failover | Healthy accounts rotate automatically; `401`, `403`, `429`, and `5xx` responses trigger cooldown and retry on another account. |
 | OpenAI-compatible API | Existing clients can use `/v1/models`, `/v1/chat/completions`, and `/v1/responses`, including SSE streaming. |
 | Live models and quotas | The dashboard reads live model entitlements, groups models by family, and shows each enabled account's remaining primary and secondary usage windows. |
+| Request analytics | A dedicated dashboard groups request counts and input/output/total/cached tokens by model, with status, duration, endpoint, and streaming mode for the latest 200 requests. Prompts and response bodies are never stored. |
+| Fluent light and dark UI | The dashboard supports system, light, and dark themes and remembers the browser's choice. |
 | Editable runtime policy | Change selection strategy, retry count, token refresh window, and status-specific cooldowns from the dashboard; settings persist in the coordinated Durable Object. |
 | Multiple client keys | Generate, review, copy, and revoke independent API keys without exposing OAuth credentials to clients. |
 | Cloudflare-native security | Admin sessions, same-origin checks, secure headers, encrypted recoverable keys, and metadata-only account responses. |
@@ -47,8 +49,9 @@ OpenAI client
                     │ serialized selection / refresh
                     ▼
            ┌──────────────────┐
-           │ AccountPool DO   │
-           │ accounts + keys  │
+│ AccountPool DO   │
+│ accounts + keys  │
+│ settings + stats │
            └────────┬─────────┘
                     │ NATIVE_EGRESS (selected Tunnel)
                     ▼
@@ -62,6 +65,8 @@ OpenAI client
 ```
 
 OAuth access tokens, refresh tokens, and account IDs stay on the server side. Model and quota lookups also run server-side through the selected Tunnel; the browser receives only model metadata, remaining percentages, reset times, and redacted account metadata.
+
+Request analytics are also coordinated in the Durable Object. The Worker tees each successful upstream response so the client keeps the original JSON or SSE stream while a bounded parser reads only usage metadata. Per-model aggregates are retained, and the recent-request list is capped at 200 entries. Records contain time, endpoint, model, status, duration, streaming mode, internal account reference, and token counts only—never prompts, response bodies, access tokens, or refresh tokens. Token totals are available when the upstream response emits an OpenAI-compatible `usage` object; requests without usage remain counted and are marked unmetered.
 
 Accounts are uniquely keyed by both the Team workspace ID and a stable user principal extracted from the OAuth JWT. The workspace `account_id` is used for upstream routing and quota requests, while the user's email is display metadata—not the sole workspace identifier. Imports without a user principal or email are rejected instead of risking an overwrite.
 
