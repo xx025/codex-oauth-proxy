@@ -1,5 +1,7 @@
 # Codex OAuth Proxy
 
+<p align="center"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
+
 A production-oriented, OpenAI-compatible gateway for ChatGPT Codex OAuth accounts. It keeps the original local proxy mode and adds a Cloudflare-native multi-account control plane with automatic token refresh, failover, streaming, secure key management, and an admin UI.
 
 > [!IMPORTANT]
