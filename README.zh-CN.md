@@ -2,7 +2,7 @@
 
 <p align="center"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
-一个面向生产环境、兼容 OpenAI API 的 ChatGPT Codex OAuth 网关。在保留原有本地代理模式的基础上，增加了 Cloudflare 原生的多账号控制面、自动 Token 刷新、故障转移、流式响应、安全密钥管理和管理界面。
+一个以 Cloudflare 为首要部署目标、面向生产环境且兼容 OpenAI API 的 ChatGPT Codex OAuth 网关。只需一个 Worker，即可获得多账号控制面、Fluent 风格管理界面、自动 Token 刷新、故障转移、流式响应和安全的客户端密钥管理；原有本地 Go 模式继续保留，适合纯本地场景。
 
 > [!IMPORTANT]
 > 本项目对接的是 ChatGPT Codex 内部后端，而不是公开且稳定的 OpenAI API。该接口可能随着官方 Codex 客户端更新而变化。请仅使用你有权管理的账号，并遵守相关服务条款。
@@ -19,6 +19,18 @@
 | Cloudflare 原生安全 | 提供管理会话、同源校验、安全响应头、可恢复密钥加密和账号元数据脱敏。 |
 | 单 Worker 部署 | TypeScript 边缘层、管理 UI、Durable Object 和 Go/Wasm 转换核心部署在同一个 Worker。 |
 | 可控网络出口 | Workers VPC 主机名路由只允许指定的 OpenAI 域名经过官方 `cloudflared` 和选定的出口 IP。 |
+
+## 以 Cloudflare 为核心
+
+本 Fork 的主要目标是在 Cloudflare 上以单 Worker 运行，而不是维护一组自定义中转服务：
+
+- **Workers**：在全球边缘节点提供 OpenAI 兼容 API 和管理界面。
+- **Durable Objects**：持久化账号池，并串行处理账号选择、Token 刷新、冷却和密钥管理，避免并发竞争。
+- **Cloudflare Access**：通过现有身份提供商保护管理域名。
+- **Workers VPC 与 Cloudflare Tunnel**：可选使用固定区域出口，出口机只运行官方 `cloudflare/cloudflared`。
+- **Custom Domains**：为 API 和管理界面提供稳定域名，应用本身仍然只部署一个 Worker。
+
+OAuth Token 不会返回浏览器，出口机器也不需要运行本项目或任何自定义中转代码。
 
 ## Cloudflare 架构
 
@@ -48,6 +60,19 @@ OpenAI 兼容客户端
 ```
 
 OAuth Access Token、Refresh Token 和账号 ID 始终保留在服务端。客户端只能获得 OpenAI 兼容响应和经过脱敏的账号元数据。
+
+## 推荐的域名与 Access 布局
+
+建议为机器调用和浏览器管理分别使用两个域名：
+
+| 域名 | 保护方式 | 用途 |
+| --- | --- | --- |
+| `api.example.com` | 本项目生成的 Proxy API Key | `/v1/models`、`/v1/chat/completions`、`/v1/responses` |
+| `admin.example.com` | Cloudflare Access + 管理会话 | 管理面板和 `/admin/api/*` |
+
+如果普通 OpenAI 客户端需要访问 API 域名，请**不要启用 Worker-level Access**。Worker-level Access 会覆盖该 Worker 关联的所有 Route、Custom Domain 和 `workers.dev` 域名，客户端会在项目 API Key 鉴权之前被重定向到交互式登录页面。正确做法是只为管理域名创建基于 hostname 的 Access Application。参见 [Cloudflare Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) 和 [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)。
+
+如果所有 API 客户端都能额外携带 Cloudflare Access Service Token，也可以选择 Worker-level Access。
 
 ## 部署方式
 
@@ -173,6 +198,8 @@ npx wrangler secret put KEY_ENCRYPTION_SECRET
 npx wrangler deploy
 ```
 
+部署后，将 API 域名和管理域名都作为 Custom Domain 绑定到同一个 Worker。在 Zero Trust 中，仅为管理域名创建 Self-hosted Access Application；API 域名不要启用交互式 Access，而是使用本项目生成的 Proxy API Key 保护。
+
 打开 Worker 根目录 `/`，通过 Cloudflare Access 或 `ADMIN_API_KEY` 登录。之后可以生成客户端 API 密钥，并导入 Codex `auth.json`、旧版 Cloudflare 凭据 JSON 或扁平凭据对象。客户端可通过 Bearer Token 或 `X-API-Key` 使用生成的密钥。
 
 为了控制 Worker 包体积，Cloudflare 构建的 `/mcp` 返回 `501 Not Implemented`；本地 Go 版本仍然完整支持 MCP。
@@ -223,7 +250,7 @@ npx wrangler deploy
 ## 调用示例
 
 ```bash
-curl -X POST http://localhost:9879/v1/chat/completions \
+curl -X POST https://api.example.com/v1/chat/completions \
   -H "Authorization: Bearer $CODEX_PROXY_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好！"}],"stream":true}'
