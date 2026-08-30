@@ -100,6 +100,19 @@ describe("AccountPoolCore", () => {
     expect(await pool.verifyProxyKey(second.key)).toBe(true);
     await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({ status: 410 });
   });
+
+  it("keeps legacy hash-only keys valid and allows revoking them", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage);
+    const legacy = await pool.generateProxyKey("Temporary");
+    storage.value = { accounts: [], cursor: 0, proxyKeyHash: storage.value?.proxyKeys?.[0].keyHash };
+    expect(await pool.verifyProxyKey(legacy.key)).toBe(true);
+    expect(await pool.listProxyKeys()).toMatchObject([{ id: "legacy", recoverable: false }]);
+    await expect(pool.revealProxyKey("legacy")).rejects.toMatchObject({ status: 410 });
+    await pool.revokeProxyKey("legacy");
+    expect(await pool.verifyProxyKey(legacy.key)).toBe(false);
+    expect(await pool.listProxyKeys()).toEqual([]);
+  });
 });
 
 describe("parseImportPayload", () => {

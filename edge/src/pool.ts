@@ -43,7 +43,7 @@ export interface ProxyKeyRecord {
   revokedAt?: number;
 }
 
-export type ProxyKeyMetadata = Omit<ProxyKeyRecord, "keyHash" | "encryptedKey">;
+export type ProxyKeyMetadata = Omit<ProxyKeyRecord, "keyHash" | "encryptedKey"> & { recoverable: boolean };
 
 export interface PoolStorage {
   get(): Promise<PoolState | undefined>;
@@ -202,7 +202,9 @@ export class AccountPoolCore {
 
   async listProxyKeys(): Promise<ProxyKeyMetadata[]> {
     const state = await this.load();
-    return (state.proxyKeys ?? []).map(redactProxyKey);
+    const keys = (state.proxyKeys ?? []).map(redactProxyKey);
+    if (state.proxyKeyHash) keys.unshift(legacyProxyKey());
+    return keys;
   }
 
   async generateProxyKey(name = "Client key"): Promise<{ key: string; metadata: ProxyKeyMetadata }> {
@@ -226,6 +228,7 @@ export class AccountPoolCore {
   }
 
   async revealProxyKey(id: string): Promise<string> {
+    if (id === "legacy") throw new PoolError(410, "Legacy key was stored as a hash and cannot be revealed");
     const state = await this.load();
     const record = requiredProxyKey(state, id);
     if (record.revokedAt) throw new PoolError(410, "Key is revoked");
@@ -234,6 +237,12 @@ export class AccountPoolCore {
 
   async revokeProxyKey(id: string): Promise<ProxyKeyMetadata> {
     const state = await this.load();
+    if (id === "legacy") {
+      if (!state.proxyKeyHash) throw new PoolError(404, "Key not found");
+      delete state.proxyKeyHash;
+      await this.storage.put(state);
+      return { ...legacyProxyKey(), revokedAt: this.now() };
+    }
     const record = requiredProxyKey(state, id);
     record.revokedAt ??= this.now();
     await this.storage.put(state);
@@ -328,7 +337,17 @@ function requiredProxyKey(state: PoolState, id: string): ProxyKeyRecord {
 
 function redactProxyKey(record: ProxyKeyRecord): ProxyKeyMetadata {
   const { keyHash: _keyHash, encryptedKey: _encryptedKey, ...metadata } = record;
-  return metadata;
+  return { ...metadata, recoverable: true };
+}
+
+function legacyProxyKey(): ProxyKeyMetadata {
+  return {
+    id: "legacy",
+    name: "旧版密钥",
+    prefix: "cp_••••（仅哈希）",
+    createdAt: 0,
+    recoverable: false,
+  };
 }
 
 function cooldownFor(failureCount: number, baseSeconds: number): number {
