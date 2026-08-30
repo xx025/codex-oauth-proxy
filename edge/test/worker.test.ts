@@ -74,6 +74,14 @@ describe("edge worker", () => {
     expect(scripts.length).toBeGreaterThan(0);
     for (const [, source] of scripts) expect(() => new Function(source)).not.toThrow();
   });
+
+  it("renders the Fluent split-shell navigation and custom logo", () => {
+    expect(ADMIN_HTML).toContain('class="app-frame hidden"');
+    expect(ADMIN_HTML).toContain('class="sidebar"');
+    expect(ADMIN_HTML).toContain('class="workspace"');
+    expect(ADMIN_HTML).toContain('class="logo-mark"');
+    expect(ADMIN_HTML).not.toContain('class="topbar"');
+  });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
     const proxyResponse = await worker.fetch(new Request("https://example.test/v1/models"), env as never, context().ctx);
