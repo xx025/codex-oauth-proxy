@@ -1,0 +1,14 @@
+{
+  "name": "codex-oauth-proxy-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260830.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

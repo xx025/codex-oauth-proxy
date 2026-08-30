@@ -134,6 +134,9 @@ func (s *Server) fetchUpstreamModelsWithRetry(ctx context.Context) (*upstreamMod
 		}
 		return parsed, nil
 	}
+	if _, ok := ctx.Value(requestCredentialsKey{}).(requestCredentials); ok {
+		return nil, &upstreamAuthError{statusCode: statusCode, detail: detail}
+	}
 
 	s.logger.Warn().
 		Str("response_body", detail).
@@ -161,7 +164,7 @@ func (s *Server) fetchUpstreamModelsWithRetry(ctx context.Context) (*upstreamMod
 }
 
 func (s *Server) fetchUpstreamModelsOnce(ctx context.Context) (*upstreamModelsResponse, int, string, error) {
-	token, accountID, err := s.credsFetcher.GetCredentials()
+	token, accountID, _, err := s.getCredentials(ctx)
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("failed to get credentials: %w", err)
 	}

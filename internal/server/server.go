@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -52,6 +54,19 @@ type Server struct {
 	modelsCacheExpiry time.Time
 }
 
+type requestCredentialsKey struct{}
+
+type requestCredentials struct {
+	accessToken string
+	accountID   string
+}
+
+const (
+	internalKeyHeader     = "X-Codex-Internal-Key"
+	internalTokenHeader   = "X-Codex-Access-Token"
+	internalAccountHeader = "X-Codex-Account-Id"
+)
+
 func New(logger zerolog.Logger, credsFetcher credentials.CredentialsFetcher) *Server {
 	disableHealthLogs, _ := strconv.ParseBool(env.GetOrDefault("DISABLE_HEALTH_LOGS", "false"))
 
@@ -85,7 +100,31 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if internalKey, ok := env.Get("INTERNAL_PROXY_KEY"); ok && internalKey != "" {
+		providedKey := r.Header.Get(internalKeyHeader)
+		accessToken := r.Header.Get(internalTokenHeader)
+		accountID := r.Header.Get(internalAccountHeader)
+		if providedKey != "" && accessToken != "" && accountID != "" &&
+			subtle.ConstantTimeCompare([]byte(providedKey), []byte(internalKey)) == 1 {
+			ctx := context.WithValue(r.Context(), requestCredentialsKey{}, requestCredentials{
+				accessToken: accessToken,
+				accountID:   accountID,
+			})
+			r = r.WithContext(ctx)
+		}
+	}
+	r.Header.Del(internalKeyHeader)
+	r.Header.Del(internalTokenHeader)
+	r.Header.Del(internalAccountHeader)
 	s.loggingMiddleware(s.mux).ServeHTTP(w, r)
+}
+
+func (s *Server) getCredentials(ctx context.Context) (string, string, bool, error) {
+	if injected, ok := ctx.Value(requestCredentialsKey{}).(requestCredentials); ok {
+		return injected.accessToken, injected.accountID, true, nil
+	}
+	token, accountID, err := s.credsFetcher.GetCredentials()
+	return token, accountID, false, err
 }
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
@@ -509,14 +548,8 @@ func (s *Server) makeChatGPTRequest(r *http.Request, url string, body []byte, to
 	// The CLI uses turn_id, so let's mock one
 	proxyReq.Header.Set("x-codex-turn-metadata", `{"turn_id":"`+newUUIDv4()+`","sandbox":"none"}`)
 
-	// Log outbound header summary (sanitized)
+	// Log only non-sensitive outbound metadata.
 	s.logger.Info().
-		Str("authorization_preview", "Bearer "+func() string {
-			if len(bareToken) > 12 {
-				return bareToken[:6] + "…" + bareToken[len(bareToken)-6:]
-			}
-			return bareToken
-		}()).
 		Str("chatgpt-account-id", accountID).
 		Str("session_id", proxyReq.Header.Get("session_id")).
 		Str("version", proxyReq.Header.Get("version")).
@@ -538,7 +571,7 @@ func (s *Server) makeChatGPTRequestWithRetry(r *http.Request, url string, body [
 	}
 
 	// Get initial credentials
-	token, accountID, err := s.credsFetcher.GetCredentials()
+	token, accountID, injected, err := s.getCredentials(r.Context())
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get credentials: %w", err)
 	}
@@ -551,6 +584,9 @@ func (s *Server) makeChatGPTRequestWithRetry(r *http.Request, url string, body [
 
 	// If not a 401 error, return the response as-is
 	if statusCode != http.StatusUnauthorized {
+		return resp, statusCode, nil
+	}
+	if injected {
 		return resp, statusCode, nil
 	}
 
@@ -571,7 +607,7 @@ func (s *Server) makeChatGPTRequestWithRetry(r *http.Request, url string, body [
 	s.logger.Info().Msg("Successfully refreshed credentials, retrying request...")
 
 	// Get the new credentials
-	token, accountID, err = s.credsFetcher.GetCredentials()
+	token, accountID, _, err = s.getCredentials(r.Context())
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get refreshed credentials: %w", err)
 	}

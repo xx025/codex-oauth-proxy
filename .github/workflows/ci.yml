@@ -28,3 +28,40 @@ jobs:
 
       - name: Test
         run: just test
+
+      - name: Build Worker
+        run: |
+          go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go
+          GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go
+
+      - name: Validate core deployment bundle
+        run: npx wrangler deploy --dry-run
+
+  edge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+
+      - name: Install dependencies
+        working-directory: edge
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: edge
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: edge
+        run: npm test
+
+      - name: Validate edge deployment bundle
+        run: npx wrangler deploy --dry-run --config edge/wrangler.toml

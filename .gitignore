@@ -3,6 +3,7 @@ request_captures
 .ropeproject
 /codex-oauth-proxy
 build/
+.wrangler/
 node_modules
 *.wasm
 captured_logs/

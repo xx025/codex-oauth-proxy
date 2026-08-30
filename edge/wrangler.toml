@@ -1,0 +1,24 @@
+name = "codex-oauth-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-08-01"
+
+[[durable_objects.bindings]]
+name = "ACCOUNT_POOL"
+class_name = "AccountPool"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountPool"]
+
+[[services]]
+binding = "PROXY_SERVICE"
+service = "codex-oauth-proxy-core"
+
+[vars]
+MAX_ACCOUNT_ATTEMPTS = "3"
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+invocation_logs = true
+persist = true

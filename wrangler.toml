@@ -1,23 +1,20 @@
-name = "codex-oauth-proxy"
+name = "codex-oauth-proxy-core"
 main = "build/worker.mjs"
-compatibility_date = "2022-05-13"
-account_id = "02c07a2514d9a25f58c78a180bb8c6f3"
+compatibility_date = "2025-08-01"
 compatibility_flags = [
     "streams_enable_constructors"
-]
-kv_namespaces = [
-  { binding = "claude_code_proxy_kv", id = "4f29ea2d933f4340b2ae3442c459e39f" }
 ]
 
 [vars]
 ENV = "production"
+DISABLE_HEALTH_LOGS = "true"
 
 
 [build]
-command = "just build-worker"
+command = "go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go"
 
 [observability.logs]
 enabled = true
-head_sampling_rate = 1
+head_sampling_rate = 0.1
 invocation_logs = true
 persist = true

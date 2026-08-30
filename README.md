@@ -127,6 +127,40 @@ just run    # Run server
 just test   # Run tests
 ```
 
+## Cloudflare multi-account deployment
+
+The Cloudflare deployment uses two Workers:
+
+- `codex-oauth-proxy` is the public edge Worker. It authenticates clients, serves the admin UI, selects accounts, applies failover/cooldown, and owns the `AccountPool` Durable Object.
+- `codex-oauth-proxy-core` is a private service-bound Go/Wasm Worker. It preserves the existing OpenAI-compatible request transforms, Responses API support, MCP endpoint, and streaming behavior.
+
+OAuth credentials live only in Durable Object storage. The edge Worker passes one selected access token to the core Worker through a Cloudflare service binding protected by an independent internal secret. Account list responses contain metadata only. Refreshes happen inside the Durable Object before expiry, so concurrent Worker isolates cannot rotate the same refresh token at the same time.
+
+Required secrets:
+
+- Edge Worker: `ADMIN_API_KEY`, `PROXY_API_KEY`, and `INTERNAL_PROXY_KEY`
+- Core Worker: `ADMIN_API_KEY` and `INTERNAL_PROXY_KEY`, both set to the same value as the edge Worker's `INTERNAL_PROXY_KEY`
+
+Deploy the core before the edge so the service binding can resolve:
+
+```bash
+npx wrangler secret put INTERNAL_PROXY_KEY --name codex-oauth-proxy-core
+npx wrangler secret put ADMIN_API_KEY --name codex-oauth-proxy-core
+npx wrangler deploy
+
+cd edge
+npx wrangler secret put ADMIN_API_KEY
+npx wrangler secret put PROXY_API_KEY
+npx wrangler secret put INTERNAL_PROXY_KEY
+npx wrangler deploy
+```
+
+Open `/admin`, sign in with `ADMIN_API_KEY`, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints use `PROXY_API_KEY` as a bearer token or `X-API-Key`.
+
+### Account routing
+
+Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`, or `5xx` enter an exponential cooldown (respecting `Retry-After` for rate limits) and the request is retried on another account before a response body is streamed. Successful requests clear the account failure state. Mid-stream upstream failures cannot be retried after bytes have reached the client.
+
 ## Endpoints
 
 - `POST /v1/chat/completions` - OpenAI chat completions-compatible endpoint
