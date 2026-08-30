@@ -45,6 +45,24 @@ function environment(options: { service: (request: Request) => Promise<Response>
 }
 
 describe("edge worker", () => {
+  it("boots Access from the root and returns the UI to the root path", async () => {
+    const { env } = environment({ service: async () => new Response("unused") });
+    const first = await worker.fetch(new Request("https://example.test/"), env as never, context().ctx);
+    expect(first.status).toBe(302);
+    expect(first.headers.get("location")).toBe("/admin?return=%2F");
+
+    const callback = await worker.fetch(new Request("https://example.test/admin?return=%2F"), env as never, context().ctx);
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/");
+    expect(callback.headers.get("set-cookie")).toContain("codex_ui=1");
+
+    const root = await worker.fetch(new Request("https://example.test/", {
+      headers: { cookie: "codex_ui=1" },
+    }), env as never, context().ctx);
+    expect(root.status).toBe(200);
+    expect(await root.text()).toContain("账户池概览");
+  });
+
   it("uses delegated account actions without interpolating inline handlers", () => {
     expect(ADMIN_HTML).toContain('data-action="toggle"');
     expect(ADMIN_HTML).toContain('button[data-action]');

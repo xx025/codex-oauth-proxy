@@ -12,6 +12,7 @@ interface Env {
 }
 
 const SESSION_COOKIE = "codex_admin";
+const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
 const encoder = new TextEncoder();
 
@@ -81,8 +82,13 @@ export const worker = {
       if (url.pathname === "/health" && request.method === "GET") {
         return json({ status: "ok" });
       }
-      if (url.pathname === "/admin" || url.pathname === "/admin/") {
+      if (url.pathname === "/" && request.method === "GET") {
+        const hasUiCookie = parseCookies(request.headers.get("cookie") || "")[UI_COOKIE] === "1";
+        if (!hasUiCookie) return redirect("/admin?return=%2F");
         return new Response(ADMIN_HTML, { headers: secureHeaders("text/html; charset=utf-8") });
+      }
+      if ((url.pathname === "/admin" || url.pathname === "/admin/") && request.method === "GET") {
+        return redirect("/", `${UI_COOKIE}=1; Secure; SameSite=Strict; Path=/; Max-Age=31536000`);
       }
       if (url.pathname.startsWith("/admin/api/")) {
         return await handleAdmin(request, env);
@@ -294,6 +300,13 @@ function secureHeaders(contentType?: string): Headers {
   });
   if (contentType) headers.set("content-type", contentType);
   return headers;
+}
+
+function redirect(location: string, cookie?: string): Response {
+  const headers = secureHeaders();
+  headers.set("location", location);
+  if (cookie) headers.set("set-cookie", cookie);
+  return new Response(null, { status: 302, headers });
 }
 
 function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
