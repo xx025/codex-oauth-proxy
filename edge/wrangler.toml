@@ -17,7 +17,7 @@ new_sqlite_classes = ["AccountPool"]
 [[vpc_networks]]
 binding = "NATIVE_EGRESS"
 # Replace this with the UUID of the Cloudflare Tunnel selected for egress.
-tunnel_id = "b3687315-a46f-4ef7-8a6c-d05a347dae8d"
+tunnel_id = "63f25b3f-89c9-428b-9516-afd65c748b37"
 remote = true
 
 [observability.logs]

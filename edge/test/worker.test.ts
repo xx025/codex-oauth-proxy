@@ -27,6 +27,7 @@ function environment(options: {
   const accountIds = options.accountIds ?? ["a"];
   const reports: Array<{ id: string; status: number }> = [];
   const records: RequestRecordInput[] = [];
+  let modelCatalogCache: { status: number; body: string; contentType?: string; expiresAt: number; createdAt: number } | undefined;
   const stub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -44,6 +45,25 @@ function environment(options: {
       if (url.pathname === "/request-records") {
         records.push(await request.json() as RequestRecordInput);
         return Response.json({ ok: true }, { status: 201 });
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
+        if (!modelCatalogCache || modelCatalogCache.expiresAt <= Date.now()) return new Response(null, { status: 204 });
+        return new Response(modelCatalogCache.body, {
+          status: modelCatalogCache.status,
+          headers: {
+            "content-type": modelCatalogCache.contentType || "application/json; charset=utf-8",
+            "x-codex-model-cache": "hit",
+          },
+        });
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "PUT") {
+        const payload = await request.json() as { status: number; body: string; contentType?: string };
+        modelCatalogCache = { ...payload, createdAt: Date.now(), expiresAt: Date.now() + 15 * 60 * 1000 };
+        return Response.json({ ok: true }, { status: 201 });
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "DELETE") {
+        modelCatalogCache = undefined;
+        return Response.json({ ok: true });
       }
       if (url.pathname === "/request-stats") return Response.json({
         totals: { requests: records.length, successfulRequests: records.filter((item) => item.status < 400).length, failedRequests: records.filter((item) => item.status >= 400).length, inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, meteredRequests: 0 },
@@ -253,6 +273,40 @@ describe("edge worker", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ data: [{ id: "gpt-5.6-sol", object: "model" }] });
+  });
+
+  it("caches successful model catalogs and refreshes them on demand", async () => {
+    let upstreamCalls = 0;
+    const service = vi.fn(async () => {
+      upstreamCalls += 1;
+      return Response.json({ data: [{ id: `model-${upstreamCalls}`, object: "model" }] });
+    });
+    const { env } = environment({ service });
+
+    const firstContext = context();
+    const first = await worker.fetch(new Request("https://example.test/admin/api/models", {
+      headers: { authorization: "Bearer admin-secret" },
+    }), env as never, firstContext.ctx);
+    await Promise.all(firstContext.waits);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ data: [{ id: "model-1", object: "model" }] });
+
+    const second = await worker.fetch(new Request("https://example.test/admin/api/models", {
+      headers: { authorization: "Bearer admin-secret" },
+    }), env as never, context().ctx);
+    expect(second.status).toBe(200);
+    expect(second.headers.get("x-codex-model-cache")).toBe("hit");
+    expect(await second.json()).toEqual({ data: [{ id: "model-1", object: "model" }] });
+    expect(service).toHaveBeenCalledTimes(1);
+
+    const refreshContext = context();
+    const refreshed = await worker.fetch(new Request("https://example.test/admin/api/models?refresh=1", {
+      headers: { authorization: "Bearer admin-secret" },
+    }), env as never, refreshContext.ctx);
+    await Promise.all(refreshContext.waits);
+    expect(refreshed.status).toBe(200);
+    expect(await refreshed.json()).toEqual({ data: [{ id: "model-2", object: "model" }] });
+    expect(service).toHaveBeenCalledTimes(2);
   });
 
   it("fails over after a rate limit and reports cooldown outcomes", async () => {

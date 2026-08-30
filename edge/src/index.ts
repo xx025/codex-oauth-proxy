@@ -26,7 +26,17 @@ interface Env {
 const SESSION_COOKIE = "codex_admin";
 const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
+const MODEL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
+const MODEL_CATALOG_CACHE_KEY = "model-catalog-cache";
 const encoder = new TextEncoder();
+
+interface ModelCatalogCache {
+  status: number;
+  body: string;
+  contentType?: string;
+  createdAt: number;
+  expiresAt: number;
+}
 
 export class AccountPool implements DurableObject {
   private readonly core: AccountPoolCore;
@@ -72,6 +82,39 @@ export class AccountPool implements DurableObject {
       if (url.pathname === "/request-records" && request.method === "POST") {
         await this.core.recordRequest(await request.json());
         return json({ ok: true }, 201);
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
+        const cache = await this.state.storage.get<ModelCatalogCache>(MODEL_CATALOG_CACHE_KEY);
+        if (!cache || cache.expiresAt <= Date.now()) {
+          if (cache) await this.state.storage.delete(MODEL_CATALOG_CACHE_KEY);
+          return new Response(null, { status: 204 });
+        }
+        const headers = new Headers({
+          "content-type": cache.contentType || "application/json; charset=utf-8",
+          "cache-control": `private, max-age=${Math.max(0, Math.floor((cache.expiresAt - Date.now()) / 1000))}`,
+          "x-codex-model-cache": "hit",
+          "x-codex-model-cache-created-at": String(cache.createdAt),
+        });
+        return new Response(cache.body, { status: cache.status, headers });
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "PUT") {
+        const payload = await request.json() as Partial<ModelCatalogCache>;
+        if (typeof payload.body !== "string" || !Number.isInteger(payload.status) || payload.status < 200 || payload.status > 299) {
+          throw new PoolError(400, "Invalid model catalog cache payload");
+        }
+        const now = Date.now();
+        await this.state.storage.put(MODEL_CATALOG_CACHE_KEY, {
+          status: payload.status,
+          body: payload.body,
+          contentType: payload.contentType || "application/json; charset=utf-8",
+          createdAt: now,
+          expiresAt: now + MODEL_CATALOG_CACHE_TTL_MS,
+        } satisfies ModelCatalogCache);
+        return json({ ok: true }, 201);
+      }
+      if (url.pathname === "/model-catalog-cache" && request.method === "DELETE") {
+        await this.state.storage.delete(MODEL_CATALOG_CACHE_KEY);
+        return json({ ok: true });
       }
       if (url.pathname === "/oauth/device/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
@@ -245,6 +288,7 @@ async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): P
 
   if (url.pathname === "/admin/api/models" && request.method === "GET") {
     const upstreamURL = new URL("/v1/models", request.url);
+    if (url.searchParams.get("refresh") === "1") upstreamURL.searchParams.set("refresh", "1");
     return cloneWithSecurityHeaders(await proxyWithFailover(new Request(upstreamURL), env, ctx));
   }
 
@@ -260,8 +304,16 @@ async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): P
 
 async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const startedAt = Date.now();
+  const url = new URL(request.url);
+  const modelCatalogRequest = request.method === "GET" && url.pathname === "/v1/models";
+  const refreshModelCatalog = modelCatalogRequest && url.searchParams.get("refresh") === "1";
+  if (modelCatalogRequest && !refreshModelCatalog) {
+    const cached = await getModelCatalogCache(env);
+    if (cached) return cloneWithSecurityHeaders(cached);
+  }
+
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
-  const metadata = requestMetadata(new URL(request.url).pathname, requestBody);
+  const metadata = requestMetadata(url.pathname, requestBody);
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
   const settings = await loadPoolSettings(env);
@@ -295,7 +347,12 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
     if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
       ctx.waitUntil(report);
-      return trackRequestResponse(stripInternalHeaders(response), env, ctx, metadata, account.id, startedAt);
+      const finalResponse = stripInternalHeaders(response);
+      if (modelCatalogRequest && finalResponse.status >= 200 && finalResponse.status < 300) {
+        const cachedBody = await finalResponse.clone().text();
+        ctx.waitUntil(putModelCatalogCache(env, finalResponse, cachedBody));
+      }
+      return trackRequestResponse(finalResponse, env, ctx, metadata, account.id, startedAt);
     }
     await report;
     lastAttempt = { response: response.clone(), accountId: account.id };
@@ -304,6 +361,26 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
   return lastAttempt
     ? trackRequestResponse(stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt)
     : json({ error: "No healthy accounts available" }, 503);
+}
+
+async function getModelCatalogCache(env: Env): Promise<Response | undefined> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/model-catalog-cache");
+  if (response.status === 204) return undefined;
+  if (!response.ok) throw new PoolError(response.status, "Model catalog cache could not be loaded");
+  return response;
+}
+
+async function putModelCatalogCache(env: Env, response: Response, body: string): Promise<void> {
+  const stored = await accountPoolStub(env).fetch("https://account-pool/model-catalog-cache", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      status: response.status,
+      contentType: response.headers.get("content-type") || "application/json; charset=utf-8",
+      body,
+    }),
+  });
+  if (!stored.ok) throw new Error(`Model catalog cache storage failed (${stored.status})`);
 }
 
 function trackRequestResponse(
