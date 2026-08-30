@@ -68,6 +68,12 @@ describe("edge worker", () => {
     expect(ADMIN_HTML).toContain('button[data-action]');
     expect(ADMIN_HTML).not.toContain("onclick=\"toggleAccount(");
   });
+
+  it("contains syntactically valid browser JavaScript", () => {
+    const scripts = [...ADMIN_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const [, source] of scripts) expect(() => new Function(source)).not.toThrow();
+  });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
     const proxyResponse = await worker.fetch(new Request("https://example.test/v1/models"), env as never, context().ctx);
