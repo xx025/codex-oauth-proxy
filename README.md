@@ -2,7 +2,9 @@
 
 <p align="center"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
-A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Codex OAuth accounts. One Worker provides the API gateway, multi-account control plane, Fluent-style admin UI, automatic token refresh, failover, streaming, and secure client-key management. The original local Go mode remains available for local-only workflows.
+A **Cloudflare-native, production-oriented OpenAI-compatible gateway** for ChatGPT Codex OAuth accounts. Its primary architecture combines Cloudflare Workers, Durable Objects, Access, Custom Domains, and optional VPC Tunnel egress in a single edge deployment. One Worker provides the API gateway, multi-account control plane, Fluent-style admin UI, automatic token refresh, failover, streaming, and secure client-key management. The original local Go mode remains available for local-only workflows.
+
+> **Cloudflare-first:** the edge gateway, state coordination, security boundary, administration UI, and Go/Wasm transformation core are deployed together on Cloudflare—no separate application server or custom relay service is required.
 
 > [!IMPORTANT]
 > This project integrates with ChatGPT Codex's internal backend. That interface is not a documented public OpenAI API and may change when the official Codex client changes. Use it only with accounts you control and in accordance with the applicable terms.
@@ -24,15 +26,17 @@ A Cloudflare-first, production-oriented OpenAI-compatible gateway for ChatGPT Co
 | One Worker deployment | The TypeScript edge, admin UI, Durable Object, and Go/Wasm transformation core deploy together. |
 | Controlled network egress | A direct Workers VPC Tunnel binding sends the allowed OpenAI hosts through an official `cloudflared` connector and a chosen exit IP. |
 
-## Cloudflare is the primary deployment target
+## Cloudflare-native by design
 
 This fork is designed to run as a single Cloudflare Worker rather than as a collection of custom relay services:
 
-- **Workers** serve the OpenAI-compatible API and the management UI globally.
-- **Durable Objects** persist the account pool and serialize selection, refresh, cooldown, and key-management operations.
-- **Cloudflare Access** can protect the management hostname with an existing identity provider.
-- **Workers VPC and Cloudflare Tunnel** optionally provide a stable egress location using only the official `cloudflare/cloudflared` connector.
-- **Custom Domains** provide stable API and administration hostnames while the Worker remains the only application deployment.
+| Cloudflare layer | Responsibility |
+| --- | --- |
+| **Workers** | Serve the OpenAI-compatible API and management UI globally, run authentication and failover, and host the Go/Wasm transformation core. |
+| **Durable Objects** | Persist the account pool and serialize selection, OAuth refresh, cooldown, policy, analytics, and client-key operations. |
+| **Cloudflare Access** | Protect the administration hostname through an existing identity provider without forcing interactive login on API clients. |
+| **Workers VPC + Tunnel** | Optionally provide controlled egress through a selected Tunnel using only the official `cloudflare/cloudflared` connector. |
+| **Custom Domains** | Separate machine API traffic from browser administration while keeping a single Worker deployment. |
 
 No OAuth token is returned to the browser. No custom application code needs to run on the egress machine.
 
@@ -49,9 +53,9 @@ OpenAI client
                     │ serialized selection / refresh
                     ▼
            ┌──────────────────┐
-│ AccountPool DO   │
-│ accounts + keys  │
-│ settings + stats │
+           │ AccountPool DO   │
+           │ accounts + keys  │
+           │ settings + stats │
            └────────┬─────────┘
                     │ NATIVE_EGRESS (selected Tunnel)
                     ▼

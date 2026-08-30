@@ -2,7 +2,9 @@
 
 <p align="center"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
-一个以 Cloudflare 为首要部署目标、面向生产环境且兼容 OpenAI API 的 ChatGPT Codex OAuth 网关。只需一个 Worker，即可获得多账号控制面、Fluent 风格管理界面、自动 Token 刷新、故障转移、流式响应和安全的客户端密钥管理；原有本地 Go 模式继续保留，适合纯本地场景。
+一个 **Cloudflare 原生、面向生产环境且兼容 OpenAI API 的 ChatGPT Codex OAuth 网关**。核心架构将 Cloudflare Workers、Durable Objects、Access、Custom Domains，以及可选的 VPC Tunnel 出口整合在一次边缘部署中。只需一个 Worker，即可获得 API 网关、多账号控制面、Fluent 风格管理界面、自动 Token 刷新、故障转移、流式响应和安全的客户端密钥管理；原有本地 Go 模式继续保留，适合纯本地场景。
+
+> **Cloudflare-first：**边缘网关、状态协调、安全边界、管理界面和 Go/Wasm 转换核心全部部署在 Cloudflare，无需额外维护应用服务器或自定义中转服务。
 
 > [!IMPORTANT]
 > 本项目对接的是 ChatGPT Codex 内部后端，而不是公开且稳定的 OpenAI API。该接口可能随着官方 Codex 客户端更新而变化。请仅使用你有权管理的账号，并遵守相关服务条款。
@@ -24,15 +26,17 @@
 | 单 Worker 部署 | TypeScript 边缘层、管理 UI、Durable Object 和 Go/Wasm 转换核心部署在同一个 Worker。 |
 | 可控网络出口 | Workers VPC 直接绑定选定 Tunnel，让允许的 OpenAI 域名经过官方 `cloudflared` 和指定出口 IP。 |
 
-## 以 Cloudflare 为核心
+## Cloudflare 原生架构
 
 本 Fork 的主要目标是在 Cloudflare 上以单 Worker 运行，而不是维护一组自定义中转服务：
 
-- **Workers**：在全球边缘节点提供 OpenAI 兼容 API 和管理界面。
-- **Durable Objects**：持久化账号池，并串行处理账号选择、Token 刷新、冷却和密钥管理，避免并发竞争。
-- **Cloudflare Access**：通过现有身份提供商保护管理域名。
-- **Workers VPC 与 Cloudflare Tunnel**：可选使用固定区域出口，出口机只运行官方 `cloudflare/cloudflared`。
-- **Custom Domains**：为 API 和管理界面提供稳定域名，应用本身仍然只部署一个 Worker。
+| Cloudflare 层 | 职责 |
+| --- | --- |
+| **Workers** | 在全球边缘节点提供 OpenAI 兼容 API 和管理界面，执行鉴权、故障转移，并承载 Go/Wasm 转换核心。 |
+| **Durable Objects** | 持久化账号池，并串行处理账号选择、OAuth 刷新、冷却策略、请求统计和客户端密钥操作。 |
+| **Cloudflare Access** | 通过现有身份提供商保护管理域名，同时避免普通 API 客户端被重定向至交互式登录。 |
+| **Workers VPC + Tunnel** | 可选提供受控网络出口，通过选定 Tunnel 和官方 `cloudflare/cloudflared` 连接器转发允许的上游流量。 |
+| **Custom Domains** | 分离机器 API 流量和浏览器管理流量，同时保持单 Worker 部署。 |
 
 OAuth Token 不会返回浏览器，出口机器也不需要运行本项目或任何自定义中转代码。
 
@@ -50,8 +54,8 @@ OpenAI 兼容客户端
                    ▼
           ┌──────────────────┐
           │ AccountPool DO   │
-│ 账号池、密钥、设置 │
-│ 与请求统计         │
+          │ 账号池、密钥     │
+          │ 设置与请求统计   │
           └────────┬─────────┘
                    │ NATIVE_EGRESS（选定 Tunnel）
                    ▼
