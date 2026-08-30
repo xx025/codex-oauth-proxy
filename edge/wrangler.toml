@@ -3,7 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2025-08-01"
 
 [build]
-command = "cd .. && go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -ldflags='-s -w' -o build/app.wasm ./cmd/codex-oauth-proxy-worker"
+command = "go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -ldflags='-s -w' -o build/app.wasm ./cmd/codex-oauth-proxy-worker"
+cwd = ".."
 
 [[durable_objects.bindings]]
 name = "ACCOUNT_POOL"

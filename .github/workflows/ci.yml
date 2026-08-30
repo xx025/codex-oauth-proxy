@@ -35,7 +35,7 @@ jobs:
           GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go
 
       - name: Validate core deployment bundle
-        run: npx wrangler deploy --dry-run
+        run: npx wrangler@4.127.1 deploy --dry-run
 
   edge:
     runs-on: ubuntu-latest
@@ -64,4 +64,5 @@ jobs:
         run: npm test
 
       - name: Validate edge deployment bundle
-        run: npx wrangler deploy --dry-run --config edge/wrangler.toml
+        working-directory: edge
+        run: npx wrangler deploy --dry-run
