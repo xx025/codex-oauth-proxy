@@ -2,14 +2,29 @@
 
 <p align="center"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
-一个 **Cloudflare 原生、面向生产环境且兼容 OpenAI API 的 ChatGPT Codex OAuth 网关**。核心架构将 Cloudflare Workers、Durable Objects、Access、Custom Domains，以及可选的 VPC Tunnel 出口整合在一次边缘部署中。只需一个 Worker，即可获得 API 网关、多账号控制面、Fluent 风格管理界面、自动 Token 刷新、故障转移、流式响应和安全的客户端密钥管理；原有本地 Go 模式继续保留，适合纯本地场景。
+<p align="center"><strong>Cloudflare 原生 · 单 Worker 部署 · 零应用服务器</strong></p>
 
-> **Cloudflare-first：**边缘网关、状态协调、安全边界、管理界面和 Go/Wasm 转换核心全部部署在 Cloudflare，无需额外维护应用服务器或自定义中转服务。
+一个面向生产环境、兼容 OpenAI API 的 ChatGPT Codex OAuth 网关，基于 Cloudflare 原生能力重新实现。单个 Worker 集成 API 网关、多账号控制面、管理界面、Token 自动刷新、故障转移、流式响应和 Go/Wasm 转换核心。
+
+> **无需购买、部署或维护应用服务器。** Workers 承载计算，Durable Objects 协调状态，Access 保护管理端，Custom Domains 对外提供服务。可选的受控出口只需在出口节点运行官方 `cloudflared`，不需要在那里部署本项目或任何自定义中转服务。
 
 > [!IMPORTANT]
 > 本项目对接的是 ChatGPT Codex 内部后端，而不是公开且稳定的 OpenAI API。该接口可能随着官方 Codex 客户端更新而变化。请仅使用你有权管理的账号，并遵守相关服务条款。
 
-## 项目优势
+## 部署到 Cloudflare
+
+Cloudflare 版本是本项目的主要部署方式。TypeScript 边缘层、管理界面、Durable Object 和 Go/Wasm Core 会作为一个 Worker 一次部署：
+
+```bash
+cd edge
+npm install
+npx wrangler secret put KEY_ENCRYPTION_SECRET
+npx wrangler deploy
+```
+
+部署前，需要连接用于网络出口的 Cloudflare Tunnel，并替换 `edge/wrangler.toml` 中的 `tunnel_id`。如果管理域名已使用 Cloudflare Access，`ADMIN_API_KEY` 可以不配置。域名、Access 和出口的完整配置参见[Cloudflare 多账号部署](#cloudflare-多账号部署)。
+
+## 核心能力
 
 | 能力 | 带来的价值 |
 | --- | --- |
@@ -89,10 +104,10 @@ OAuth Access Token、Refresh Token 和账号 ID 始终保留在服务端。模�
 
 ## 部署方式
 
-- **Cloudflare 多账号模式**：适合需要 Web 管理界面、集中账号池和高可用能力的共享网关。
-- **本地 Go 模式**：适合单机使用、本地 MCP，以及独立的 XDG/系统钥匙串凭据存储。
+- **Cloudflare 原生模式（推荐）**：零应用服务器的一体化边缘部署，提供 Web 管理界面、集中账号池和自动故障转移。
+- **本地 Go 模式（可选）**：适合单机使用、本地 MCP，以及独立的 XDG/系统钥匙串凭据存储。
 
-Cloudflare 多账号版本需要从本仓库部署。下面的包管理器命令安装的是原始本地 Go 代理模式。
+Cloudflare 版本直接从本仓库部署。下面的包管理器命令只用于安装可选的本地 Go 代理。
 
 ## 安装本地版本
 
@@ -200,12 +215,14 @@ Worker 代码还会执行相同的双域名白名单，拒绝访问其他目标�
 
 客户端 API 密钥直接在 UI 中生成和管理，不需要为每个客户端配置环境变量。故障转移次数使用代码中的安全默认值，也不再暴露为部署变量。
 
-连接命名 Tunnel，将 `edge/wrangler.toml` 中的 `tunnel_id` 替换成它的 UUID，然后部署：
+连接命名 Tunnel，将 `edge/wrangler.toml` 中的 `tunnel_id` 替换成它的 UUID，然后部署。`ADMIN_API_KEY` 是可选项；完全使用 Cloudflare Access 时可以省略：
 
 ```bash
 cd edge
-npx wrangler secret put ADMIN_API_KEY
+npm install
 npx wrangler secret put KEY_ENCRYPTION_SECRET
+# 可选：不使用 Cloudflare Access 时的备用登录方式
+npx wrangler secret put ADMIN_API_KEY
 npx wrangler deploy
 ```
 

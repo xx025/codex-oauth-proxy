@@ -2,14 +2,29 @@
 
 <p align="center"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
-A **Cloudflare-native, production-oriented OpenAI-compatible gateway** for ChatGPT Codex OAuth accounts. Its primary architecture combines Cloudflare Workers, Durable Objects, Access, Custom Domains, and optional VPC Tunnel egress in a single edge deployment. One Worker provides the API gateway, multi-account control plane, Fluent-style admin UI, automatic token refresh, failover, streaming, and secure client-key management. The original local Go mode remains available for local-only workflows.
+<p align="center"><strong>Cloudflare native · One Worker · Zero application servers</strong></p>
 
-> **Cloudflare-first:** the edge gateway, state coordination, security boundary, administration UI, and Go/Wasm transformation core are deployed together on Cloudflare—no separate application server or custom relay service is required.
+A production-oriented, OpenAI-compatible gateway for ChatGPT Codex OAuth accounts, rebuilt around Cloudflare's native platform. A single Worker bundles the API gateway, multi-account control plane, admin UI, automatic token refresh, failover, streaming, and the Go/Wasm transformation core.
+
+> **No application server to provision or maintain.** Workers handles compute, Durable Objects handles coordinated state, Access protects administration, and Custom Domains expose the service. The optional controlled-egress setup needs only the official `cloudflared` connector on an exit node—no copy of this application and no custom relay service runs there.
 
 > [!IMPORTANT]
 > This project integrates with ChatGPT Codex's internal backend. That interface is not a documented public OpenAI API and may change when the official Codex client changes. Use it only with accounts you control and in accordance with the applicable terms.
 
-## Why this fork
+## Deploy on Cloudflare
+
+The Cloudflare edition is the primary deployment target. It ships the TypeScript edge layer, administration UI, Durable Object, and Go/Wasm core as one Worker:
+
+```bash
+cd edge
+npm install
+npx wrangler secret put KEY_ENCRYPTION_SECRET
+npx wrangler deploy
+```
+
+Before deploying, connect the Cloudflare Tunnel used for egress and replace `tunnel_id` in `edge/wrangler.toml`. `ADMIN_API_KEY` is optional when Cloudflare Access protects the administration hostname. See [Cloudflare multi-account deployment](#cloudflare-multi-account-deployment) for the complete domain, Access, and egress setup.
+
+## What you get
 
 | Capability | What you gain |
 | --- | --- |
@@ -87,14 +102,14 @@ Do **not** enable Worker-level Access when ordinary OpenAI clients need to call 
 
 For a private deployment where every client can send Cloudflare Access service-token headers, Worker-level Access is also supported.
 
-## Deployment choices
+## Deployment modes
 
-- **Cloudflare multi-account mode** — recommended for a shared, highly available gateway with a web UI and centralized account pool.
-- **Local Go mode** — useful for one-machine workflows, local MCP support, and independent XDG/keychain credential storage.
+- **Cloudflare native mode (recommended)** — one edge deployment with no application server, a web UI, centralized account pool, and automatic failover.
+- **Local Go mode (optional)** — for one-machine workflows, local MCP support, and independent XDG/keychain credential storage.
 
-The Cloudflare multi-account edition is deployed from this repository. The package-manager commands below install the original local Go proxy mode.
+The Cloudflare edition deploys directly from this repository. The package-manager commands below install only the optional local Go proxy.
 
-## Install
+## Optional local installation
 
 Option 1 (recommended): install a prebuilt binary via npm (macOS, Linux, Windows):
 
@@ -216,12 +231,14 @@ Only two secrets are used:
 
 Client API keys are generated and managed in the UI, so no per-client environment variables are needed. The failover attempt limit is a safe code default rather than a deployment variable.
 
-Connect the named Cloudflare Tunnel, replace `tunnel_id` in `edge/wrangler.toml` with its UUID, then deploy the single Worker:
+Connect the named Cloudflare Tunnel, replace `tunnel_id` in `edge/wrangler.toml` with its UUID, then deploy the single Worker. `ADMIN_API_KEY` is optional and can be omitted when Cloudflare Access is used exclusively:
 
 ```bash
 cd edge
-npx wrangler secret put ADMIN_API_KEY
+npm install
 npx wrangler secret put KEY_ENCRYPTION_SECRET
+# Optional fallback login without Cloudflare Access:
+npx wrangler secret put ADMIN_API_KEY
 npx wrangler deploy
 ```
 
