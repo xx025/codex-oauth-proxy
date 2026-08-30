@@ -55,7 +55,7 @@ docker-build:
 # Build for Cloudflare Workers
 build-worker:
 	go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go
-	GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go
+	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go
 
 # Show help
 help:

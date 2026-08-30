@@ -157,6 +157,8 @@ npx wrangler deploy
 
 Open `/admin`, sign in with `ADMIN_API_KEY`, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints use `PROXY_API_KEY` as a bearer token or `X-API-Key`.
 
+The Cloudflare build returns `501 Not Implemented` for `/mcp` to stay within the 3 MiB free-plan Worker limit. The local Go binary retains full MCP support.
+
 ### Account routing
 
 Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`, or `5xx` enter an exponential cooldown (respecting `Retry-After` for rate limits) and the request is retried on another account before a response body is streamed. Successful requests clear the account failure state. Mid-stream upstream failures cannot be retried after bytes have reached the client.

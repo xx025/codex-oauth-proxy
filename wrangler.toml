@@ -11,7 +11,7 @@ DISABLE_HEALTH_LOGS = "true"
 
 
 [build]
-command = "go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go"
+command = "go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -trimpath -ldflags='-s -w' -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go"
 
 [observability.logs]
 enabled = true
