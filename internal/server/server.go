@@ -104,13 +104,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		providedKey := r.Header.Get(internalKeyHeader)
 		accessToken := r.Header.Get(internalTokenHeader)
 		accountID := r.Header.Get(internalAccountHeader)
-		if providedKey != "" && accessToken != "" && accountID != "" &&
-			subtle.ConstantTimeCompare([]byte(providedKey), []byte(internalKey)) == 1 {
+		authenticated := providedKey != "" && accessToken != "" && accountID != "" &&
+			subtle.ConstantTimeCompare([]byte(providedKey), []byte(internalKey)) == 1
+		if authenticated {
 			ctx := context.WithValue(r.Context(), requestCredentialsKey{}, requestCredentials{
 				accessToken: accessToken,
 				accountID:   accountID,
 			})
 			r = r.WithContext(ctx)
+		}
+		allowed := r.URL.Path == "/health" || authenticated
+		if !allowed {
+			r.Header.Del(internalKeyHeader)
+			r.Header.Del(internalTokenHeader)
+			r.Header.Del(internalAccountHeader)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
 		}
 	}
 	r.Header.Del(internalKeyHeader)
@@ -537,7 +546,7 @@ func (s *Server) makeChatGPTRequest(r *http.Request, url string, body []byte, to
 	// Set headers for ChatGPT backend
 	proxyReq.Header.Set("authorization", "Bearer "+bareToken)
 	proxyReq.Header.Set("version", codexClientVersion)
-	proxyReq.Header.Set("openai-beta", "responses=experimental")
+	proxyReq.Header.Set("openai-beta", "responses=v1")
 	proxyReq.Header.Set("session_id", newUUIDv4())
 	proxyReq.Header.Set("accept", "text/event-stream")
 	proxyReq.Header.Set("content-type", "application/json")
@@ -680,7 +689,7 @@ func (s *Server) writeResponse(w http.ResponseWriter, resp *http.Response, statu
 		}
 
 		// Detect streaming responses (handle charset variations)
-		isStreaming := mediaType == "text/event-stream"
+		isStreaming := convertSSE || mediaType == "text/event-stream"
 		if isStreaming {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")

@@ -5,7 +5,7 @@ package server
 // upstream requests and as the client_version query parameter when listing
 // models; the backend gates both model availability and protocol features on
 // it, so the two must stay in sync.
-const codexClientVersion = "0.144.6"
+const codexClientVersion = "0.151.0-alpha.7.2"
 
 // Models currently served by the ChatGPT Codex backend. The GPT-5.0 through
 // GPT-5.3 generation (and its -codex variants) was retired upstream: the

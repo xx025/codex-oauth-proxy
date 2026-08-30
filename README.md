@@ -1,26 +1,58 @@
-# Codex Proxy
+# Codex OAuth Proxy
 
-Transparently proxy OpenAI-compatible chat completions requests to ChatGPT Codex's internal Responses API.
+A production-oriented, OpenAI-compatible gateway for ChatGPT Codex OAuth accounts. It keeps the original local proxy mode and adds a Cloudflare-native multi-account control plane with automatic token refresh, failover, streaming, secure key management, and an admin UI.
+
+> [!IMPORTANT]
+> This project integrates with ChatGPT Codex's internal backend. That interface is not a documented public OpenAI API and may change when the official Codex client changes. Use it only with accounts you control and in accordance with the applicable terms.
+
+## Why this fork
+
+| Capability | What you gain |
+| --- | --- |
+| Multi-account pool | Import, rename, enable, disable, and remove multiple Codex accounts from one Fluent-style dashboard. |
+| Automatic refresh without races | A Durable Object serializes account selection and OAuth refreshes, preventing concurrent refresh-token rotation. |
+| Round-robin and failover | Healthy accounts rotate automatically; `401`, `403`, `429`, and `5xx` responses trigger cooldown and retry on another account. |
+| OpenAI-compatible API | Existing clients can use `/v1/models`, `/v1/chat/completions`, and `/v1/responses`, including SSE streaming. |
+| Multiple client keys | Generate, review, copy, and revoke independent API keys without exposing OAuth credentials to clients. |
+| Cloudflare-native security | Admin sessions, same-origin checks, secure headers, encrypted recoverable keys, and metadata-only account responses. |
+| One Worker deployment | The TypeScript edge, admin UI, Durable Object, and Go/Wasm transformation core deploy together. |
+| Controlled network egress | Workers VPC hostname routes can send only the allowed OpenAI hosts through an official `cloudflared` connector and a chosen exit IP. |
+
+## Cloudflare architecture
 
 ```text
-  ┌───────────────┐          ┌───────────────────┐          ┌───────────────────────┐
-  │ External Tool │          │       Proxy       │          │    Codex Endpoint     │
-  │ (OpenCode/etc)│          │ (Local or Worker) │          │ (ChatGPT Responses)   │
-  └───────┬───────┘          └─────────┬─────────┘          └───────────┬───────────┘
-          │                            │                                │
-          │  Standard OpenAI Request   │    Internal API Request        │
-          │ ─────────────────────────▶ │ ─────────────────────────────▶ │
-          │ (v1/chat/completions)      │ (Wrapped + Codex credentials)  │
-          │                            │                                │
-          │                            │                                │
-          │  Standard API Response     │    Internal API Response       │
-          │ ◀───────────────────────── │ ◀───────────────────────────── │
-          │ (Unwrapped + SSE Stream)   │ (Codex-specific Stream)        │
-          │                            │                                │
-          ▼                            ▼                                ▼
+OpenAI client
+     │  Bearer key / X-API-Key
+     ▼
+┌──────────────────────────────────────────────┐
+│ codex-oauth-proxy Worker                     │
+│ Admin UI · client auth · failover · Go/Wasm │
+└───────────────────┬──────────────────────────┘
+                    │ serialized selection / refresh
+                    ▼
+           ┌──────────────────┐
+           │ AccountPool DO   │
+           │ accounts + keys  │
+           └────────┬─────────┘
+                    │ NATIVE_EGRESS (cf1:network)
+                    ▼
+      Tunnel Hostname routes for allowed hosts
+                    │
+                    ▼
+       official cloudflare/cloudflared only
+                    │
+                    ▼
+          ChatGPT Codex / OAuth endpoints
 ```
 
-This proxy exposes ChatGPT Codex (Plus/Pro subscription) through an OpenAI-compatible interface, allowing you to use opinionated models like `gpt-5` or `gpt-5.1-codex` with tools that expect standard OpenAI APIs.
+OAuth access tokens, refresh tokens, and account IDs stay on the server side. Clients receive only OpenAI-compatible responses and redacted account metadata.
+
+## Deployment choices
+
+- **Cloudflare multi-account mode** — recommended for a shared, highly available gateway with a web UI and centralized account pool.
+- **Local Go mode** — useful for one-machine workflows, local MCP support, and independent XDG/keychain credential storage.
+
+The Cloudflare multi-account edition is deployed from this repository. The package-manager commands below install the original local Go proxy mode.
 
 ## Install
 
@@ -129,36 +161,35 @@ just test   # Run tests
 
 ## Cloudflare multi-account deployment
 
-The Cloudflare deployment uses two Workers:
+The Cloudflare deployment uses one Worker, `codex-oauth-proxy`. The TypeScript edge and Go/Wasm Core are bundled into the same Worker. It authenticates clients, serves the admin UI at `/`, selects accounts, applies failover and cooldown, preserves OpenAI-compatible transformations and streaming, and owns the `AccountPool` Durable Object.
 
-- `codex-oauth-proxy` is the public edge Worker. It authenticates clients, serves the admin UI, selects accounts, applies failover/cooldown, and owns the `AccountPool` Durable Object.
-- `codex-oauth-proxy-core` is a private service-bound Go/Wasm Worker. It preserves the existing OpenAI-compatible request transforms, Responses API support, MCP endpoint, and streaming behavior.
+OAuth credentials live only in Durable Object storage. Account list responses contain metadata only. Refreshes happen inside the Durable Object before expiry, so concurrent Worker isolates cannot rotate the same refresh token at the same time.
 
-OAuth credentials live only in Durable Object storage. The edge Worker passes one selected access token to the core Worker through a Cloudflare service binding protected by an independent internal secret. Account list responses contain metadata only. Refreshes happen inside the Durable Object before expiry, so concurrent Worker isolates cannot rotate the same refresh token at the same time.
+### Native egress routing
 
-Optional fallback secrets:
+The Worker uses the account-wide Workers VPC Network (`network_id = "cf1:network"`). Tunnel Hostname routes for `chatgpt.com` and `auth.openai.com` point to a named Cloudflare Tunnel. The tunnel connector runs only the official `cloudflare/cloudflared` image on the selected exit node, so model traffic, device login, and token refresh leave through that node without a custom relay application. Worker code also enforces the same two-host allowlist.
 
-- Edge Worker: `ADMIN_API_KEY` and `PROXY_API_KEY`. With Cloudflare Access enabled, the admin key is unnecessary; a proxy key can be generated from the UI and only its hash is stored.
-- Edge Worker always requires `INTERNAL_PROXY_KEY`.
-- Core Worker: `ADMIN_API_KEY` and `INTERNAL_PROXY_KEY`, both set to the same value as the edge Worker's `INTERNAL_PROXY_KEY`
+Required and optional secrets:
 
-Deploy the core before the edge so the service binding can resolve:
+- `INTERNAL_PROXY_KEY` — required internal trust boundary between the TypeScript edge and embedded Go/Wasm Core.
+- `KEY_ENCRYPTION_SECRET` — strongly recommended as a dedicated key-encryption secret; otherwise `INTERNAL_PROXY_KEY` is used as the fallback.
+- `ADMIN_EMAIL` — recommended when the dashboard is protected by Cloudflare Access.
+- `ADMIN_API_KEY` — optional fallback for admin login without an Access identity header.
+- `PROXY_API_KEY` — optional legacy client key; new deployments should generate multiple managed keys in the UI.
+
+Connect the named Cloudflare Tunnel, add both Tunnel Hostname routes, then deploy the single Worker:
 
 ```bash
-npx wrangler secret put INTERNAL_PROXY_KEY --name codex-oauth-proxy-core
-npx wrangler secret put ADMIN_API_KEY --name codex-oauth-proxy-core
-npx wrangler deploy
-
 cd edge
 npx wrangler secret put ADMIN_API_KEY
-npx wrangler secret put PROXY_API_KEY
 npx wrangler secret put INTERNAL_PROXY_KEY
+npx wrangler secret put KEY_ENCRYPTION_SECRET
 npx wrangler deploy
 ```
 
-Open `/admin`, authenticate through Cloudflare Access (or the optional `ADMIN_API_KEY` fallback), generate a proxy API key, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints accept the generated key as a bearer token or `X-API-Key`.
+Open `/`, authenticate through Cloudflare Access (or the optional `ADMIN_API_KEY` fallback), generate a proxy API key, and paste a Codex `auth.json`, the legacy Cloudflare credential JSON, or a flat credential object. The proxy endpoints accept the generated key as a bearer token or `X-API-Key`.
 
-The Cloudflare build returns `501 Not Implemented` for `/mcp` to stay within the 3 MiB free-plan Worker limit. The local Go binary retains full MCP support.
+The Cloudflare build returns `501 Not Implemented` for `/mcp` to stay within the Worker bundle limit. The local Go binary retains full MCP support.
 
 ### Account routing
 
@@ -169,7 +200,7 @@ Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`
 - `POST /v1/chat/completions` - OpenAI chat completions-compatible endpoint
 - `POST /v1/responses` - OpenAI Responses-compatible endpoint (Codex)
 - `GET /health` - Health check
-- `/mcp` - an MCP server exposing the models as tools (`ask_codex`, `ask_codex_models`)
+- `/mcp` - local Go mode only; exposes `ask_codex` and `ask_codex_models` as MCP tools
 
 ## MCP clients
 
@@ -201,197 +232,19 @@ Two tools are exposed:
 - `ask_codex_models()` - list the model IDs that can be passed to `ask_codex`, with the
   reasoning effort levels each one accepts.
 
-## Models and Reasoning Mappings
+## Models and reasoning
 
-The proxy exposes a small, opinionated set of models and maps many user-facing
-model strings onto canonical backend models.
+`/v1/models` is entitlement-aware: it fetches the live model catalog for the selected Codex account instead of presenting a permanently hard-coded list. Newly launched upstream models can therefore appear without waiting for a proxy release.
 
-### Supported base models
+The current normalization layer recognizes `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-daybreak-blue-latest`. Retired or unknown GPT-5 aliases fall back to a currently served model so older clients fail gracefully.
 
-The `/v1/models` endpoint returns metadata for these base models:
-
-- `gpt-5`
-- `gpt-5-codex`
-- `gpt-5.1`
-- `gpt-5.1-codex`
-- `gpt-5.1-codex-max`
-- `gpt-5.2`
-- `gpt-5.2-codex`
-- `gpt-5.3-codex`
-- `gpt-5.3-codex-spark`
-- `gpt-5.5`
-- `gpt-5-codex-mini`
-- `gpt-5.1-codex-mini`
-
-Each base model is also exposed with reasoning-effort suffix variants, e.g.:
-
-- `gpt-5-high`, `gpt-5-medium`, `gpt-5-low`, `gpt-5-minimal`
-- `gpt-5.1-high`, `gpt-5.1-medium`, `gpt-5.1-low`
-- `gpt-5.5-low`, `gpt-5.5-medium`, `gpt-5.5-high`, `gpt-5.5-xhigh`
-- `gpt-5.1-codex-max-low`, `gpt-5.1-codex-max-high`, `gpt-5.1-codex-max-xhigh`
-- `gpt-5.3-codex-spark-low`, `gpt-5.3-codex-spark-medium`, `gpt-5.3-codex-spark-high`, `gpt-5.3-codex-spark-xhigh`
-- `gpt-5-codex-mini-medium`, `gpt-5-codex-mini-high`
-
-These suffix forms are discoverable via `/v1/models` for clients that encode
-reasoning effort in the `model` name.
-
-### Model normalization rules
-
-Incoming requests may use model names with additional decorations. The proxy
-normalizes them to canonical backend models before forwarding upstream:
-
-- Any trailing `-xhigh`, `-high`, `-medium`, `-low`, or `-minimal` suffix is treated as
-  a reasoning-effort hint and stripped from the model name before normalization.
-- Explicit new models are preserved:
-  - `gpt-5.1*` → `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, or `gpt-5.1-codex-mini` depending on the prefix.
-  - `gpt-5.5*` → `gpt-5.5` when the suffix is a supported reasoning effort.
-  - `gpt-5-codex-mini*` → `gpt-5-codex-mini`.
-  - `gpt-5.3-codex-spark*` → `gpt-5.3-codex-spark`.
-- For legacy and loose names:
-  - Any model containing `"codex"` (e.g. `gpt-5-mini-codex-preview`) maps to the
-    canonical `gpt-5-codex` model.
-  - Other GPT‑5-series names (e.g. `gpt-5-mini`) collapse to `gpt-5`.
-
-The normalized backend model is what is sent to the upstream `/backend-api/codex/responses`
-endpoint and is also used when rewriting streaming responses.
-
-### Reasoning effort and suffix behavior
-
-Reasoning effort can be provided in three ways:
-
-- `reasoning_effort` top-level string field
-- `reasoning.effort` nested field
-- A `-high`, `-medium`, `-low`, `-xhigh`, or `-minimal` suffix on the `model` name
-  (for clients that cannot set a separate reasoning field)
-
-The proxy combines these inputs as follows:
-
-- It first resolves an effort value from `reasoning_effort`, then `reasoning.effort`,
-  and finally from any `-<effort>` suffix on the `model` string.
-- The value is normalized to one of: `minimal`, `low`, `medium`, `high`, `xhigh`
-  (`none` is treated as `low`).
-- The effort is then **clamped per model** to enforce allowed ranges:
-  - `gpt-5`, `gpt-5-codex`:
-    - Allowed: `minimal`, `low`, `medium`, `high`
-    - No default; if not specified, the proxy omits `reasoning.effort` and lets
-      upstream decide.
-  - `gpt-5.1`, `gpt-5.1-codex`:
-    - Allowed: `low`, `medium`, `high`
-    - `minimal` is coerced to `low`.
-    - Default when unspecified: `low`.
-  - `gpt-5.1-codex-max`:
-    - Allowed: `low`, `medium`, `high`, `xhigh`
-    - `minimal` is coerced to `low`.
-    - Default when unspecified: `low`.
-  - `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5.5`:
-    - Allowed: `low`, `medium`, `high`, `xhigh`
-    - Default when unspecified: `medium` (`gpt-5.3-codex-spark` defaults to `high`).
-  - `gpt-5-codex-mini`, `gpt-5.1-codex-mini`:
-    - Allowed: `medium`, `high`
-    - `low`/`minimal`/`none` are coerced to `medium`.
-    - Default when unspecified: `medium`.
-
-This means suffix-only clients like:
-
-- `model: "gpt-5.1-high"`
-- `model: "gpt-5-codex-mini-low"`
-
-will transparently be mapped to the appropriate canonical backend model with a
-compatible reasoning effort (`gpt-5.1` + `high`, `gpt-5-codex-mini` + `medium`,
-respectively), even if they do not send `reasoning_effort` explicitly.
+Reasoning effort can be supplied as `reasoning_effort`, `reasoning.effort`, or a model suffix such as `-low`, `-medium`, `-high`, `-xhigh`, or `-max`. The proxy normalizes and clamps the value to the levels supported by the selected model. The generated effort variants are also discoverable through `/v1/models`.
 
 ## Example
 
 ```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:9879/v1/chat/completions \
+  -H "Authorization: Bearer $CODEX_PROXY_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Hello!"}],"stream":true}'
 ```
-
-## Cloudflare Workers Deployment
-
-### Prerequisites
-
-1. Create a KV namespace in Cloudflare:
-
-   ```bash
-   wrangler kv:namespace create "GEMINI_CLI_KV"
-   ```
-
-2. Update `wrangler.toml` with your KV namespace ID and account ID
-
-### Deployment
-
-```bash
-# Build and deploy
-wrangler deploy
-
-# Set required secrets
-wrangler secret put ADMIN_API_KEY  # Enter your admin API key for credential management
-```
-
-### Managing Credentials
-
-After deployment, populate credentials in KV storage using the admin API.
-
-#### Setting Credentials
-
-Use the POST `/admin/credentials` endpoint to update tokens:
-
-```bash
-curl -X POST https://your-worker.workers.dev/admin/credentials \
-  -H "Authorization: Bearer YOUR_ADMIN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "accessToken": "your-access-token",
-    "refreshToken": "your-refresh-token",
-    "expiresAt": 1234567890000,
-    "userID": "your-user-id"
-  }'
-```
-
-**Required fields:**
-
-- `accessToken`: Access token for ChatGPT/Codex backend
-- `refreshToken`: Refresh token for automatic renewal
-- `expiresAt`: Token expiration timestamp in milliseconds (Unix timestamp \* 1000)
-- `userID` (optional): User identifier for tracking
-
-**Getting tokens:**
-
-- Retrieve your ChatGPT/Codex session tokens from your OpenAI account session (e.g., via DevTools Network panel).
-- Ensure `expiresAt` reflects the token expiry in milliseconds.
-
-#### Checking Credential Status
-
-To verify the credentials are properly stored and check their expiration:
-
-```bash
-curl https://your-worker.workers.dev/admin/credentials/status \
-  -H "Authorization: Bearer YOUR_ADMIN_API_KEY"
-```
-
-This returns:
-
-```json
-{
-  "type": "oauth",
-  "hasCredentials": true,
-  "userID": "your-user-id",
-  "expiresAt": 1234567890000,
-  "minutesUntilExpiry": 120,
-  "isExpired": false,
-  "needsRefreshSoon": false
-}
-```
-
-**Note:** You can use either `Authorization: Bearer <key>` or `X-API-Key: <key>` headers for authentication.
-
-### Environment Variables for Workers
-
-- `ADMIN_API_KEY` (secret) - Required for accessing admin endpoints
-- KV namespace binding - Configured in `wrangler.toml` as `GEMINI_CLI_KV`
-
-### Token Refresh
-
-The worker automatically refreshes tokens when they expire (within 60 minutes of expiry). Refreshed tokens are automatically saved back to KV storage.

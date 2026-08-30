@@ -15,3 +15,4 @@ npm/codex-oauth-proxy.exe
 codex-oauth-proxy.service
 sh.d.codex-oauth-proxy.plist
 dist
+edge/dist-*/

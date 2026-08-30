@@ -1,9 +1,14 @@
 import { AccountPoolCore, PoolError, PoolState, parseImportPayload } from "./pool";
+import { DeviceLoginSession, beginDeviceLogin, pollDeviceLogin, publicDeviceLogin } from "./oauth";
 import { ADMIN_HTML } from "./ui";
+import { fetchEmbeddedCore } from "./core";
+import { createUpstreamFetch } from "./egress";
 
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace;
-  PROXY_SERVICE: Fetcher;
+  // Optional test override. Production uses the embedded Go/Wasm Core.
+  PROXY_SERVICE?: Fetcher;
+  NATIVE_EGRESS?: Fetcher;
   ADMIN_API_KEY?: string;
   PROXY_API_KEY?: string;
   ADMIN_EMAIL?: string;
@@ -19,13 +24,15 @@ const encoder = new TextEncoder();
 
 export class AccountPool implements DurableObject {
   private readonly core: AccountPoolCore;
+  private readonly upstreamFetch: typeof fetch;
   private tail: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly state: DurableObjectState, env: Env) {
+    this.upstreamFetch = createUpstreamFetch(env);
     this.core = new AccountPoolCore({
       get: () => this.state.storage.get<PoolState>("pool"),
       put: (value) => this.state.storage.put("pool", value),
-    }, fetch, Date.now, env.KEY_ENCRYPTION_SECRET || env.INTERNAL_PROXY_KEY);
+    }, this.upstreamFetch, Date.now, env.KEY_ENCRYPTION_SECRET || env.INTERNAL_PROXY_KEY);
   }
 
   fetch(request: Request): Promise<Response> {
@@ -43,6 +50,28 @@ export class AccountPool implements DurableObject {
       if (url.pathname === "/accounts" && request.method === "POST") {
         const account = await this.core.importAccount(parseImportPayload(await request.json()));
         return json({ account }, 201);
+      }
+      if (url.pathname === "/oauth/device/start" && request.method === "POST") {
+        const { name } = await request.json() as { name?: string };
+        await this.pruneDeviceLogins();
+        const session = await beginDeviceLogin(this.upstreamFetch, Date.now, name);
+        await this.state.storage.put(this.deviceLoginKey(session.id), session);
+        return json({ login: publicDeviceLogin(session) }, 201);
+      }
+      const deviceMatch = url.pathname.match(/^\/oauth\/device\/([0-9a-f-]+)$/i);
+      if (deviceMatch && request.method === "POST") {
+        const key = this.deviceLoginKey(deviceMatch[1]);
+        const session = await this.state.storage.get<DeviceLoginSession>(key);
+        if (!session) throw new PoolError(404, "Device login session not found");
+        const result = await pollDeviceLogin(session, this.upstreamFetch);
+        if (result.pending) return json({ status: "pending" }, 202);
+        const account = await this.core.importAccount(result.credentials);
+        await this.state.storage.delete(key);
+        return json({ status: "complete", account });
+      }
+      if (deviceMatch && request.method === "DELETE") {
+        await this.state.storage.delete(this.deviceLoginKey(deviceMatch[1]));
+        return json({ ok: true });
       }
       const match = url.pathname.match(/^\/accounts\/([^/]+)$/);
       if (match && request.method === "PATCH") {
@@ -89,6 +118,18 @@ export class AccountPool implements DurableObject {
     } catch (error) {
       return errorResponse(error);
     }
+  }
+
+  private deviceLoginKey(id: string): string {
+    return `device-login:${id}`;
+  }
+
+  private async pruneDeviceLogins(): Promise<void> {
+    const sessions = await this.state.storage.list<DeviceLoginSession>({ prefix: "device-login:" });
+    const expired = [...sessions.entries()]
+      .filter(([, session]) => session.expiresAt <= Date.now())
+      .map(([key]) => key);
+    if (expired.length) await this.state.storage.delete(expired);
   }
 }
 
@@ -158,7 +199,13 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
   let lastResponse: Response | undefined;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const account = await selectAccount(env, excluded);
+    let account: { id: string; accessToken: string; accountId: string };
+    try {
+      account = await selectAccount(env, excluded);
+    } catch (error) {
+      if (lastResponse) return stripInternalHeaders(lastResponse);
+      throw error;
+    }
     excluded.push(account.id);
     const headers = new Headers(request.headers);
     headers.set("authorization", `Bearer ${env.INTERNAL_PROXY_KEY}`);
@@ -167,12 +214,12 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
     headers.set("x-codex-access-token", account.accessToken);
     headers.set("x-codex-account-id", account.accountId);
 
-    const response = await env.PROXY_SERVICE.fetch(new Request(request.url, {
+    const response = await fetchCore(env, new Request(request.url, {
       method: request.method,
       headers,
       body: requestBody ? requestBody.slice(0) : undefined,
       redirect: "manual",
-    }));
+    }), ctx);
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
     const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
@@ -181,10 +228,15 @@ async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionConte
       return stripInternalHeaders(response);
     }
     await report;
+    lastResponse = response.clone();
     response.body?.cancel().catch(() => undefined);
-    lastResponse = response;
   }
   return lastResponse ? stripInternalHeaders(lastResponse) : json({ error: "No healthy accounts available" }, 503);
+}
+
+function fetchCore(env: Env, request: Request, ctx: ExecutionContext): Promise<Response> {
+  if (env.PROXY_SERVICE) return env.PROXY_SERVICE.fetch(request);
+  return fetchEmbeddedCore(request, env, ctx);
 }
 
 async function selectAccount(env: Env, excluded: string[]): Promise<{

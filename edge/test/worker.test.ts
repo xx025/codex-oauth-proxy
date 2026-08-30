@@ -10,9 +10,12 @@ function context() {
   };
 }
 
-function environment(options: { service: (request: Request) => Promise<Response>; accountIds?: string[] }) {
+function environment(options: {
+  service?: (request: Request) => Promise<Response>;
+  accountIds?: string[];
+  coreOrigin?: string;
+}) {
   const accountIds = options.accountIds ?? ["a"];
-  let cursor = 0;
   const reports: Array<{ id: string; status: number }> = [];
   const stub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -20,7 +23,8 @@ function environment(options: { service: (request: Request) => Promise<Response>
       const url = new URL(request.url);
       if (url.pathname === "/select") {
         const { excluded } = await request.json() as { excluded: string[] };
-        const id = accountIds.find((candidate) => !excluded.includes(candidate)) ?? accountIds[cursor++ % accountIds.length];
+        const id = accountIds.find((candidate) => !excluded.includes(candidate));
+        if (!id) return Response.json({ error: "No healthy accounts available" }, { status: 503 });
         return Response.json({ account: { id, accountId: `upstream-${id}`, accessToken: `token-${id}` } });
       }
       if (url.pathname === "/report") {
@@ -35,7 +39,8 @@ function environment(options: { service: (request: Request) => Promise<Response>
     reports,
     env: {
       ACCOUNT_POOL: { idFromName: () => ({}) as DurableObjectId, get: () => stub as unknown as DurableObjectStub },
-      PROXY_SERVICE: { fetch: options.service },
+      PROXY_SERVICE: options.service ? { fetch: options.service } : undefined,
+      CORE_ORIGIN: options.coreOrigin,
       ADMIN_API_KEY: "admin-secret",
       PROXY_API_KEY: "proxy-secret",
       INTERNAL_PROXY_KEY: "internal-secret",
@@ -90,6 +95,14 @@ describe("edge worker", () => {
     }
     expect(ADMIN_HTML).toContain("function switchView(view)");
   });
+
+  it("offers ChatGPT device login without exposing OAuth tokens to browser code", () => {
+    expect(ADMIN_HTML).toContain("使用 ChatGPT 登录");
+    expect(ADMIN_HTML).toContain("/admin/api/oauth/device/start");
+    expect(ADMIN_HTML).toContain("一次性代码");
+    expect(ADMIN_HTML).not.toContain("deviceAuthId");
+    expect(ADMIN_HTML).not.toContain("/oauth/token");
+  });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ service: async () => new Response("unused") });
     const proxyResponse = await worker.fetch(new Request("https://example.test/v1/models"), env as never, context().ctx);
@@ -130,6 +143,16 @@ describe("edge worker", () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
+  it("preserves the last upstream error when no failover account remains", async () => {
+    const { env, reports } = environment({ service: async () => new Response("upstream unavailable", { status: 502 }) });
+    const response = await worker.fetch(new Request("https://example.test/v1/models", {
+      headers: { authorization: "Bearer proxy-secret" },
+    }), env as never, context().ctx);
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("upstream unavailable");
+    expect(reports).toEqual([{ id: "a", status: 502, retryAfterSeconds: undefined }]);
+  });
+
   it("preserves streaming bodies", async () => {
     const stream = new ReadableStream({
       start(controller) {
@@ -148,5 +171,18 @@ describe("edge worker", () => {
     await Promise.all(waits);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     expect(await response.text()).toBe("data: one\n\ndata: [DONE]\n\n");
+  });
+
+  it("passes public API requests to the in-process Core interface", async () => {
+    const service = vi.fn(async (request: Request) => Response.json({ target: request.url }));
+    const { env } = environment({ service, coreOrigin: "https://relay.example.test/" });
+    const { ctx, waits } = context();
+    const response = await worker.fetch(new Request("https://public.example.test/v1/models", {
+      headers: { authorization: "Bearer proxy-secret" },
+    }), env as never, ctx);
+    await Promise.all(waits);
+    expect(response.status).toBe(200);
+    expect(service).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toEqual({ target: "https://public.example.test/v1/models" });
   });
 });

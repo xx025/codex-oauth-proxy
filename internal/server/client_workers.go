@@ -4,7 +4,9 @@ package server
 
 import (
 	"net/http"
+	"syscall/js"
 
+	"github.com/syumai/workers/cloudflare"
 	"github.com/syumai/workers/cloudflare/fetch"
 )
 
@@ -15,8 +17,13 @@ type WorkersHTTPClient struct {
 
 // NewHTTPClient creates a new HTTP client for Workers environment
 func NewHTTPClient() HTTPClient {
+	binding := cloudflare.GetBinding("EGRESS")
+	options := []fetch.ClientOption{}
+	if binding.Type() != js.TypeUndefined && binding.Type() != js.TypeNull {
+		options = append(options, fetch.WithBinding(binding))
+	}
 	return &WorkersHTTPClient{
-		client: fetch.NewClient(),
+		client: fetch.NewClient(options...),
 	}
 }
 

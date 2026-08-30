@@ -11,6 +11,11 @@ import (
 // 'Authorization: Bearer <key>' or 'X-API-Key: <key>' headers.
 func (s *Server) adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if _, injected := r.Context().Value(requestCredentialsKey{}).(requestCredentials); injected {
+			next(w, r)
+			return
+		}
+
 		adminKey, ok := env.Get("ADMIN_API_KEY")
 		if !ok || adminKey == "" {
 			s.logger.Error().Msg("ADMIN_API_KEY environment variable not set")

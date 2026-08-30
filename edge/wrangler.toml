@@ -2,6 +2,9 @@ name = "codex-oauth-proxy"
 main = "src/index.ts"
 compatibility_date = "2025-08-01"
 
+[build]
+command = "cd .. && go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && GOOS=js GOARCH=wasm go build -ldflags='-s -w' -o build/app.wasm ./cmd/codex-oauth-proxy-worker"
+
 [[durable_objects.bindings]]
 name = "ACCOUNT_POOL"
 class_name = "AccountPool"
@@ -10,12 +13,13 @@ class_name = "AccountPool"
 tag = "v1"
 new_sqlite_classes = ["AccountPool"]
 
-[[services]]
-binding = "PROXY_SERVICE"
-service = "codex-oauth-proxy-core"
-
 [vars]
 MAX_ACCOUNT_ATTEMPTS = "3"
+
+[[vpc_networks]]
+binding = "NATIVE_EGRESS"
+network_id = "cf1:network"
+remote = true
 
 [observability.logs]
 enabled = true
