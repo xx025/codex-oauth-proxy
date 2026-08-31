@@ -1,163 +1,132 @@
-# Codex OAuth Proxy
+# Cloudflare OAuth API Gateway
 
-<p align="center"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
+English | [简体中文](README.zh-CN.md)
 
-<p align="center"><strong>Cloudflare native · One Worker · Zero application servers</strong></p>
+An OpenAI-compatible, multi-account OAuth gateway implemented entirely in TypeScript. The API, administration UI, OAuth flows, account routing, and streaming conversion run in one Cloudflare Worker; durable state lives in a Durable Object.
 
-A production-oriented, OpenAI-compatible gateway for ChatGPT Codex OAuth accounts, rebuilt around Cloudflare's native platform. A single Worker bundles the API gateway, multi-account control plane, admin UI, automatic token refresh, failover, streaming, and the Go/Wasm transformation core.
+This repository contains no local application service, container, native binary, or WebAssembly runtime. Because the upstream rejects ordinary Worker egress IPs, every upstream request must use the `NATIVE_EGRESS` Cloudflare VPC binding. Requests fail closed if that binding is unavailable.
 
-> **No application server to provision or maintain.** Workers handles compute, Durable Objects handles coordinated state, Access protects administration, and Custom Domains expose the service. The optional controlled-egress setup needs only the official `cloudflared` connector on an exit node—no copy of this application and no custom relay service runs there.
+> The upstream interface is not a documented, stable public API and may change with the official client. Use only accounts you control and follow the applicable terms.
 
-> [!IMPORTANT]
-> This project integrates with ChatGPT Codex's internal backend. That interface is not a documented public OpenAI API and may change when the official Codex client changes. Use it only with accounts you control and in accordance with the applicable terms.
+## Features
 
-## Deploy on Cloudflare
+- OpenAI-compatible Models, Chat Completions, and Responses APIs
+- Streaming SSE forwarding and buffered responses
+- Multi-account rotation, token refresh, cooldown, and failover
+- Device-code login, browser PKCE, and manual credential import
+- Independent client API keys, administration UI, and request statistics
+- Stateless MCP JSON-RPC endpoint
+- Egress host allowlisting, credential redaction, and bounded buffering
 
-The Cloudflare edition is the primary deployment target. It ships the TypeScript edge layer, administration UI, Durable Object, and Go/Wasm core as one Worker:
-
-```bash
-cd edge
-npm install
-npx wrangler secret put KEY_ENCRYPTION_SECRET
-npx wrangler deploy
-```
-
-Before deploying, connect the Cloudflare Tunnel used for egress and replace `tunnel_id` in `edge/wrangler.toml`. `ADMIN_API_KEY` is optional when Cloudflare Access protects the administration hostname. See [Cloudflare multi-account deployment](#cloudflare-multi-account-deployment) for the complete domain, Access, and egress setup.
-
-## What you get
-
-| Capability | What you gain |
-| --- | --- |
-| Multi-account pool | Import, rename, enable, disable, and remove multiple Codex accounts—even when several users share the same Team workspace. JWT user identity prevents `account_id` collisions, while email makes each member recognizable in the dashboard. |
-| Automatic refresh without races | A Durable Object serializes account selection and OAuth refreshes, preventing concurrent refresh-token rotation. |
-| Round-robin and failover | Healthy accounts rotate automatically; `401`, `403`, `429`, and `5xx` responses trigger cooldown and retry on another account. |
-| OpenAI-compatible API | Existing clients can use `/v1/models`, `/v1/chat/completions`, and `/v1/responses`, including SSE streaming. |
-| Live models and quotas | The dashboard reads live model entitlements, groups models by family, and shows each enabled account's remaining primary and secondary usage windows. |
-| Request analytics | A dedicated dashboard groups request counts and input/output/total/cached tokens by model, with status, duration, endpoint, and streaming mode for the latest 200 requests. Prompts and response bodies are never stored. |
-| Fluent light and dark UI | The dashboard supports system, light, and dark themes and remembers the browser's choice. |
-| Editable runtime policy | Change selection strategy, retry count, token refresh window, and status-specific cooldowns from the dashboard; settings persist in the coordinated Durable Object. |
-| Multiple client keys | Generate, review, copy, and revoke independent API keys without exposing OAuth credentials to clients. |
-| Cloudflare-native security | Admin sessions, same-origin checks, secure headers, encrypted recoverable keys, and metadata-only account responses. |
-| One Worker deployment | The TypeScript edge, admin UI, Durable Object, and Go/Wasm transformation core deploy together. |
-| Controlled network egress | A direct Workers VPC Tunnel binding sends the allowed OpenAI hosts through an official `cloudflared` connector and a chosen exit IP. |
-
-## Cloudflare-native by design
-
-This fork is designed to run as a single Cloudflare Worker rather than as a collection of custom relay services:
-
-| Cloudflare layer | Responsibility |
-| --- | --- |
-| **Workers** | Serve the OpenAI-compatible API and management UI globally, run authentication and failover, and host the Go/Wasm transformation core. |
-| **Durable Objects** | Persist the account pool and serialize selection, OAuth refresh, cooldown, policy, analytics, and client-key operations. |
-| **Cloudflare Access** | Protect the administration hostname through an existing identity provider without forcing interactive login on API clients. |
-| **Workers VPC + Tunnel** | Optionally provide controlled egress through a selected Tunnel using only the official `cloudflare/cloudflared` connector. |
-| **Custom Domains** | Separate machine API traffic from browser administration while keeping a single Worker deployment. |
-
-No OAuth token is returned to the browser. No custom application code needs to run on the egress machine.
-
-## Cloudflare architecture
+## Architecture
 
 ```text
-OpenAI client
-     │  Bearer key / X-API-Key
-     ▼
-┌──────────────────────────────────────────────┐
-│ codex-oauth-proxy Worker                     │
-│ Admin UI · client auth · failover · Go/Wasm │
-└───────────────────┬──────────────────────────┘
-                    │ serialized selection / refresh
-                    ▼
-           ┌──────────────────┐
-           │ AccountPool DO   │
-           │ accounts + keys  │
-           │ settings + stats │
-           └────────┬─────────┘
-                    │ NATIVE_EGRESS (selected Tunnel)
-                    ▼
-          Direct Workers VPC Tunnel binding
-                    │
-                    ▼
-       official cloudflare/cloudflared only
-                    │
-                    ▼
-          ChatGPT Codex / OAuth endpoints
+API clients / administrators
+             │
+             ▼
+Cloudflare Worker (TypeScript)
+             │
+             ├── AccountPool Durable Object
+             │     accounts, OAuth, keys, metrics, cooldowns
+             │
+             └── NATIVE_EGRESS VPC Network
+                       │
+                       ▼
+             chatgpt.com / auth.openai.com
 ```
 
-OAuth access tokens, refresh tokens, and account IDs stay on the server side. Model and quota lookups also run server-side through the selected Tunnel; the browser receives only model metadata, remaining percentages, reset times, and redacted account metadata.
+The VPC/Tunnel supplies only the accepted network egress. This project does not run an application process or container on the egress node.
 
-Request analytics are also coordinated in the Durable Object. The Worker tees each successful upstream response so the client keeps the original JSON or SSE stream while a bounded parser reads only usage metadata. Per-model aggregates are retained, and the recent-request list is capped at 200 entries. Records contain time, endpoint, model, status, duration, streaming mode, internal account reference, and token counts only—never prompts, response bodies, access tokens, or refresh tokens. Token totals are available when the upstream response emits an OpenAI-compatible `usage` object; requests without usage remain counted and are marked unmetered.
+## Prerequisites
 
-Accounts are uniquely keyed by both the Team workspace ID and a stable user principal extracted from the OAuth JWT. The workspace `account_id` is used for upstream routing and quota requests, while the user's email is display metadata—not the sole workspace identifier. Imports without a user principal or email are rejected instead of risking an overwrite.
+- Node.js 24 or newer
+- A Cloudflare account authenticated with Wrangler
+- An online Cloudflare Tunnel/VPC egress
+- An egress public IP accepted by the ChatGPT upstream
 
-## Recommended domain and Access layout
+Confirm that the Tunnel ID in `wrangler.jsonc` belongs to the intended egress:
 
-Use separate hostnames for machine API traffic and browser administration:
+```jsonc
+"vpc_networks": [
+  {
+    "binding": "NATIVE_EGRESS",
+    "tunnel_id": "63f25b3f-89c9-428b-9516-afd65c748b37",
+    "remote": true
+  }
+]
+```
 
-| Hostname | Protection | Purpose |
-| --- | --- | --- |
-| `api.example.com` | Managed proxy API keys | `/v1/models`, `/v1/chat/completions`, `/v1/responses` |
-| `admin.example.com` | Cloudflare Access + admin session | Dashboard and `/admin/api/*` |
-
-Do **not** enable Worker-level Access when ordinary OpenAI clients need to call the API hostname. Worker-level Access covers every route, Custom Domain, and `workers.dev` hostname attached to the Worker, so clients would be redirected to an interactive Access login before the project's API-key authentication runs. Instead, create a hostname-based Access application for the administration hostname only. See [Cloudflare Access for Workers](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) and [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
-
-For a private deployment where every client can send Cloudflare Access service-token headers, Worker-level Access is also supported.
-
-## Cloudflare multi-account deployment
-
-The Cloudflare deployment uses one Worker, `codex-oauth-proxy`. The TypeScript edge and Go/Wasm Core are bundled into the same Worker. It authenticates clients, serves the admin UI at `/`, selects accounts, applies failover and cooldown, preserves OpenAI-compatible transformations and streaming, and owns the `AccountPool` Durable Object.
-
-OAuth credentials live only in Durable Object storage. Account list responses contain metadata only. Refreshes happen inside the Durable Object before expiry, so concurrent Worker isolates cannot rotate the same refresh token at the same time.
-
-### Native egress routing
-
-The Worker uses a direct Workers VPC Network binding to one selected Cloudflare Tunnel (`tunnel_id`). This avoids ambiguous Mesh or Hostname Route selection and ensures model traffic, device login, and token refresh use that tunnel's exit node. The connector runs only the official `cloudflare/cloudflared` image; no custom relay application is required. Worker code also enforces the `chatgpt.com` and `auth.openai.com` allowlist.
-
-Only two secrets are used:
-
-- `KEY_ENCRYPTION_SECRET` — required application secret for recoverable client-key encryption, admin-session signing, and the embedded Core trust boundary.
-- `ADMIN_API_KEY` — optional fallback for admin login without Cloudflare Access.
-
-Client API keys are generated and managed in the UI, so no per-client environment variables are needed. The failover attempt limit is a safe code default rather than a deployment variable.
-
-Connect the named Cloudflare Tunnel, replace `tunnel_id` in `edge/wrangler.toml` with its UUID, then deploy the single Worker. `ADMIN_API_KEY` is optional and can be omitted when Cloudflare Access is used exclusively:
+## Deploy
 
 ```bash
-cd edge
-npm install
+npm ci
+npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
-# Optional fallback login without Cloudflare Access:
-npx wrangler secret put ADMIN_API_KEY
-npx wrangler deploy
+npm run check
+npm run deploy
 ```
 
-Then attach the API and administration Custom Domains to the same Worker. In Zero Trust, create a self-hosted Access application for the administration hostname only; leave the API hostname outside interactive Access and rely on the managed proxy keys generated by this project.
+Use a long random value for `KEY_ENCRYPTION_SECRET`; it encrypts recoverable client keys and signs administrator sessions.
 
-Open `/`, authenticate through Cloudflare Access (or the optional `ADMIN_API_KEY` fallback), and add accounts with any of the three supported methods: device-code login, PKCE browser login by pasting the resulting `http://localhost:1455/auth/callback?...` URL, or manual credential JSON import. The callback-paste flow verifies the one-time OAuth `state` and keeps the PKCE verifier in Durable Object storage. Generate a proxy API key in the UI; proxy endpoints accept it as a bearer token or `X-API-Key`.
-
-### Account routing
-
-Enabled accounts are selected round-robin. Accounts returning `429`, `401`/`403`, or `5xx` enter an exponential cooldown (respecting `Retry-After` for rate limits) and the request is retried on another account before a response body is streamed. Successful requests clear the account failure state. Mid-stream upstream failures cannot be retried after bytes have reached the client.
-
-## Endpoints
-
-- `POST /v1/chat/completions` - OpenAI chat completions-compatible endpoint
-- `POST /v1/responses` - OpenAI Responses-compatible endpoint (Codex)
-- `GET /v1/models` - live models and supported reasoning-effort variants
-- `GET /health` - Health check
-
-## Models and reasoning
-
-`/v1/models` is entitlement-aware: it fetches the live model catalog for the selected Codex account instead of presenting a permanently hard-coded list. Newly launched upstream models can therefore appear without waiting for a proxy release.
-
-The current normalization layer recognizes `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-daybreak-blue-latest`. Retired or unknown GPT-5 aliases fall back to a currently served model so older clients fail gracefully.
-
-Reasoning effort can be supplied as `reasoning_effort`, `reasoning.effort`, or a model suffix such as `-low`, `-medium`, `-high`, `-xhigh`, or `-max`. The proxy normalizes and clamps the value to the levels supported by the selected model. The generated effort variants are also discoverable through `/v1/models`.
-
-## Example
+If Cloudflare Access does not protect the administration hostname, also set:
 
 ```bash
-curl -X POST https://api.example.com/v1/chat/completions \
-  -H "Authorization: Bearer $CODEX_PROXY_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Hello!"}],"stream":true}'
+npx wrangler secret put ADMIN_API_KEY
 ```
+
+Verify the deployment:
+
+```bash
+curl https://YOUR_WORKER_DOMAIN/health
+```
+
+Then open the Worker root URL, sign in through Cloudflare Access or `ADMIN_API_KEY`, add an OAuth account, and generate a client API key. API clients can use `Authorization: Bearer <key>` or `X-API-Key: <key>`.
+
+## API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Worker health check |
+| `GET` | `/v1/models` | Available models and reasoning levels |
+| `POST` | `/v1/chat/completions` | Chat Completions compatibility |
+| `POST` | `/v1/responses` | Responses compatibility |
+| `POST` | `/mcp` | MCP JSON-RPC endpoint |
+| `GET` | `/` | Administration UI |
+
+Example:
+
+```bash
+curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_CLIENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+For production, use separate Custom Domains for the API and administration UI. Protect only the administration hostname with Cloudflare Access so API clients are not redirected to an interactive login.
+
+## Development
+
+```bash
+npm run types       # regenerate Worker types from wrangler.jsonc
+npm run typecheck
+npm test
+npm run build       # wrangler deploy --dry-run
+npm run check       # run every validation
+```
+
+Key files:
+
+- `src/index.ts`: Worker routing, admin authentication, failover, and Durable Object
+- `src/api.ts`: OpenAI-compatible conversion and SSE handling
+- `src/pool.ts`: account pool, client keys, settings, and statistics
+- `src/oauth.ts`: OAuth login, refresh, and account identity
+- `src/egress.ts`: mandatory VPC binding and egress allowlist
+- `src/mcp.ts`: MCP JSON-RPC adapter
+- `src/ui.ts`: embedded administration interface
+- `wrangler.jsonc`: Cloudflare deployment configuration
+
+OAuth credentials and refresh tokens are stored only in the Durable Object, and public account responses are redacted. The egress allowlist permits only `chatgpt.com` and `auth.openai.com`.
+
+## License
+
+[MIT](LICENSE)

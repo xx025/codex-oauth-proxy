@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "codex-oauth-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACCOUNT_POOL", "class_name": "AccountPool" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AccountPool"] }
+  ],
+  "vpc_networks": [
+    {
+      "binding": "NATIVE_EGRESS",
+      "tunnel_id": "63f25b3f-89c9-428b-9516-afd65c748b37",
+      "remote": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+      "invocation_logs": true,
+      "persist": true
+    }
+  }
+}

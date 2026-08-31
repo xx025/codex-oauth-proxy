@@ -11,37 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install just
-        uses: extractions/setup-just@v2
-
-      - name: Build
-        run: just build
-
-      - name: Test
-        run: just test
-
-      - name: Build Worker
-        run: |
-          go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go
-          GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o ./build/app.wasm cmd/codex-oauth-proxy-worker/main.go
-
-      - name: Validate core deployment bundle
-        run: npx wrangler@4.127.1 deploy --dry-run
-
-  edge:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Node
@@ -49,20 +19,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: edge/package-lock.json
 
       - name: Install dependencies
-        working-directory: edge
         run: npm ci
 
-      - name: Typecheck
-        working-directory: edge
-        run: npm run typecheck
-
-      - name: Test
-        working-directory: edge
-        run: npm test
-
-      - name: Validate edge deployment bundle
-        working-directory: edge
-        run: npx wrangler deploy --dry-run
+      - name: Validate
+        run: npm run check
