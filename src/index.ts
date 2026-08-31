@@ -10,7 +10,7 @@ import {
   publicBrowserLogin,
   publicDeviceLogin,
 } from "./oauth";
-import { ADMIN_HTML, FAVICON_SVG } from "./ui";
+import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { createUpstreamFetch } from "./egress";
 import { RequestMetadata, emptyTokenUsage, readTokenUsage } from "./metrics";
 import { finalizeUpstreamResponse, prepareProxyRequest, readRequestBody, upstreamHeaders } from "./api";
@@ -265,6 +265,12 @@ export const worker = {
         const headers = secureHeaders("image/svg+xml; charset=utf-8");
         headers.set("cache-control", "public, max-age=86400");
         return new Response(FAVICON_SVG, { headers });
+      }
+      const adminAsset = ADMIN_ASSETS[url.pathname];
+      if (adminAsset && request.method === "GET") {
+        const headers = secureHeaders(adminAsset.contentType);
+        headers.set("cache-control", "no-cache");
+        return new Response(adminAsset.body, { headers });
       }
       if (url.pathname === "/" && request.method === "GET") {
         const hasUiCookie = parseCookies(request.headers.get("cookie") || "")[UI_COOKIE] === "1";
@@ -652,7 +658,7 @@ function cloneWithSecurityHeaders(response: Response): Response {
 function secureHeaders(contentType?: string): Headers {
   const headers = new Headers({
     "cache-control": "no-store",
-    "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",

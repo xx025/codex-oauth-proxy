@@ -6,17 +6,20 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "wrangler deploy --dry-run",
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
+    "frontend:build": "node scripts/build-frontend.mjs",
+    "build": "npm run frontend:build && wrangler deploy --dry-run",
+    "deploy": "npm run frontend:build && wrangler deploy",
+    "dev": "npm run frontend:build && wrangler dev",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p frontend/tsconfig.json",
     "types": "wrangler types",
     "types:check": "wrangler types --check",
     "check": "npm run types:check && npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "preact": "^10.27.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
     "wrangler": "4.127.1"

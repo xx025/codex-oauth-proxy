@@ -9,3 +9,5 @@ coverage/
 .env.*
 !.env.example
 *.log
+codex-oauth-proxy
+build/app.wasm

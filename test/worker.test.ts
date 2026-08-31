@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProxyExecutor, worker } from "../src/index";
 import { RequestRecordInput } from "../src/pool";
-import { ADMIN_HTML, FAVICON_SVG } from "../src/ui";
+import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
 function context() {
   const waits: Promise<unknown>[] = [];
@@ -162,27 +162,26 @@ describe("edge worker", () => {
       headers: { cookie: "codex_ui=1" },
     }), env as never, context().ctx);
     expect(root.status).toBe(200);
-    expect(await root.text()).toContain("运行概览");
+    const html = await root.text();
+    expect(html).toContain('<div id="app">');
+    expect(html).toContain('/admin/assets/app.js');
+    expect(html).toContain('/admin/assets/app.css');
+    expect(root.headers.get("content-security-policy")).toContain("script-src 'self' 'unsafe-inline'");
+    expect(root.headers.get("content-security-policy")).toContain("style-src 'self'");
   });
 
-  it("uses delegated account actions without interpolating inline handlers", () => {
-    expect(ADMIN_HTML).toContain('data-action="toggle"');
-    expect(ADMIN_HTML).toContain('button[data-action]');
-    expect(ADMIN_HTML).not.toContain("onclick=\"toggleAccount(");
-  });
-
-  it("contains syntactically valid browser JavaScript", () => {
-    const scripts = [...ADMIN_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)];
-    expect(scripts.length).toBeGreaterThan(0);
-    for (const [, source] of scripts) expect(() => new Function(source)).not.toThrow();
-  });
-
-  it("renders the Fluent split-shell navigation and custom logo", () => {
-    expect(ADMIN_HTML).toContain('class="app-frame hidden"');
-    expect(ADMIN_HTML).toContain('class="sidebar"');
-    expect(ADMIN_HTML).toContain('class="workspace"');
-    expect(ADMIN_HTML).toContain('class="logo-mark"');
-    expect(ADMIN_HTML).not.toContain('class="topbar"');
+  it("serves the locally bundled Preact application from same-origin Worker routes", async () => {
+    expect(ADMIN_HTML).not.toContain("cdn");
+    expect(ADMIN_ASSETS["/admin/assets/app.js"].body.length).toBeGreaterThan(10_000);
+    const { env } = environment({ upstream: async () => new Response("unused") });
+    const script = await worker.fetch(new Request("https://example.test/admin/assets/app.js"), env as never, context().ctx);
+    const style = await worker.fetch(new Request("https://example.test/admin/assets/app.css"), env as never, context().ctx);
+    expect(script.status).toBe(200);
+    expect(script.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(script.headers.get("cache-control")).toBe("no-cache");
+    expect(await script.text()).toBe(ADMIN_ASSETS["/admin/assets/app.js"].body);
+    expect(style.headers.get("content-type")).toBe("text/css; charset=utf-8");
+    expect(await style.text()).toContain(".app-shell");
   });
 
   it("serves the branded SVG favicon with explicit caching", async () => {
@@ -196,82 +195,67 @@ describe("edge worker", () => {
     expect(await response.text()).toContain("#0f6cbd");
   });
 
-  it("provides navigable account, model, usage, key, and settings sections", () => {
-    for (const view of ["home", "accounts", "models", "usage", "keys", "settings"]) {
-      expect(ADMIN_HTML).toContain(`data-view="${view}"`);
-      expect(ADMIN_HTML).toContain(`data-page="${view}"`);
-    }
-    expect(ADMIN_HTML).toContain("function switchView(view)");
-  });
-
-  it("orders the menu by workflow and mirrors every section on the home page", () => {
-    expect(ADMIN_HTML).toContain("['home','accounts','keys','models','usage','settings']");
-    for (const view of ["accounts", "keys", "models", "usage", "settings"]) {
-      expect(ADMIN_HTML).toContain(`data-view-target="${view}"`);
-    }
-    for (const id of ["homeAccountsValue", "homeKeysValue", "homeModelsValue", "homeRequestsValue", "homeSettingsValue"]) {
-      expect(ADMIN_HTML).toContain(`id="${id}"`);
-    }
+  it("bundles every hash-routed page and shared shell primitive", () => {
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    for (const view of ["home", "accounts", "keys", "models", "usage", "settings"]) expect(source).toContain(view);
+    for (const title of ["运行概览", "账户池", "密钥", "可用模型", "请求统计", "其他设置"]) expect(source).toContain(title);
+    expect(source).toContain("hashchange");
+    expect(source).toContain("app-shell");
+    expect(source).toContain("page-header");
+    expect(source).toContain("panel");
   });
 
   it("provides a remembered system, light, and dark theme without a server secret", () => {
-    expect(ADMIN_HTML).toContain('id="themeSelect"');
-    expect(ADMIN_HTML).toContain('<option value="system">跟随系统</option>');
-    expect(ADMIN_HTML).toContain('<option value="dark">深色</option>');
-    expect(ADMIN_HTML).toContain("localStorage.setItem('codex-theme',value)");
-    expect(ADMIN_HTML).toContain('[data-theme=dark]');
-  });
-
-  it("uses dark-aware Fluent hover colors for interactive surfaces", () => {
-    expect(ADMIN_HTML).toContain("--surface-hover:#303030");
-    expect(ADMIN_HTML).toContain(".btn:hover{background:var(--surface-hover)");
-    expect(ADMIN_HTML).toContain(".nav-item.active,.nav-item.active:hover");
-    expect(ADMIN_HTML).toContain(".info-card:hover,.model-card:hover");
-    expect(ADMIN_HTML).toContain(".account-row:hover,.key-row:hover,.data-table tbody tr:hover{background:var(--surface-hover)}");
+    const assets = ADMIN_HTML + ADMIN_ASSETS["/admin/assets/app.js"].body + ADMIN_ASSETS["/admin/assets/app.css"].body;
+    expect(assets).toContain("codex-theme");
+    expect(assets).toContain("跟随系统");
+    expect(assets).toContain("深色");
+    expect(assets).toContain("data-theme=dark");
+    expect(assets).toContain("prefers-color-scheme:dark");
   });
 
   it("renders request and token analytics without prompt or response content fields", () => {
-    expect(ADMIN_HTML).toContain("/admin/api/request-stats");
-    expect(ADMIN_HTML).toContain("按模型汇总");
-    expect(ADMIN_HTML).toContain("最近请求");
-    expect(ADMIN_HTML).toContain("Total Tokens");
-    expect(ADMIN_HTML).not.toContain('item.prompt');
-    expect(ADMIN_HTML).not.toContain('item.responseBody');
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("/admin/api/request-stats");
+    expect(source).toContain("按模型汇总");
+    expect(source).toContain("最近请求");
+    expect(source).toContain("Total Tokens");
+    expect(source).not.toContain("prompt");
+    expect(source).not.toContain("responseBody");
   });
 
   it("renders quota refresh and live model catalog controls", () => {
-    expect(ADMIN_HTML).toContain("/admin/api/accounts/usage");
-    expect(ADMIN_HTML).toContain("剩余额度");
-    expect(ADMIN_HTML).toContain("/admin/api/models");
-    expect(ADMIN_HTML).toContain("可用模型");
-    expect(ADMIN_HTML).toContain("Workspace · ");
-    expect(ADMIN_HTML).toContain("a.email||a.principalId");
-    expect(ADMIN_HTML).toContain("modelFamily(model)");
-    expect(ADMIN_HTML).toContain('class="model-group"');
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("/admin/api/accounts/usage");
+    expect(source).toContain("刷新额度");
+    expect(source).toContain("/admin/api/models");
+    expect(source).toContain("可用模型");
+    expect(source).toContain("Workspace · ");
   });
 
   it("provides editable persisted runtime settings without exposing secrets", () => {
-    expect(ADMIN_HTML).toContain("/admin/api/settings");
-    expect(ADMIN_HTML).toContain("saveSettings()");
-    expect(ADMIN_HTML).toContain('id="selectionStrategy"');
-    expect(ADMIN_HTML).toContain('id="maxAccountAttempts"');
-    expect(ADMIN_HTML).not.toContain('id="keyEncryptionSecret"');
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("/admin/api/settings");
+    expect(source).toContain("selectionStrategy");
+    expect(source).toContain("maxAccountAttempts");
+    expect(source).not.toContain("keyEncryptionSecret");
   });
 
   it("offers ChatGPT device login without exposing OAuth tokens to browser code", () => {
-    expect(ADMIN_HTML).toContain("使用 ChatGPT 登录");
-    expect(ADMIN_HTML).toContain("/admin/api/oauth/device/start");
-    expect(ADMIN_HTML).toContain("一次性代码");
-    expect(ADMIN_HTML).not.toContain("deviceAuthId");
-    expect(ADMIN_HTML).not.toContain("/oauth/token");
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("使用 ChatGPT 登录");
+    expect(source).toContain("/admin/api/oauth/");
+    expect(source).toContain("一次性代码");
+    expect(source).not.toContain("deviceAuthId");
+    expect(source).not.toContain("/oauth/token");
   });
 
   it("offers PKCE callback URL login as a device-code fallback", () => {
-    expect(ADMIN_HTML).toContain("复制链接登录");
-    expect(ADMIN_HTML).toContain("/admin/api/oauth/browser/start");
-    expect(ADMIN_HTML).toContain("http://localhost:1455/auth/callback?code=");
-    expect(ADMIN_HTML).toContain("完成导入");
-    expect(ADMIN_HTML).not.toContain("codeVerifier");
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("复制链接登录");
+    expect(source).toContain("http://localhost:1455/auth/callback?code=");
+    expect(source).toContain("完成导入");
+    expect(source).not.toContain("codeVerifier");
   });
   it("rejects unauthenticated proxy and admin API requests", async () => {
     const { env } = environment({ upstream: async () => new Response("unused") });
