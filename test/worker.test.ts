@@ -214,12 +214,24 @@ describe("edge worker", () => {
     expect(assets).toContain("prefers-color-scheme:dark");
   });
 
+  it("bundles persisted browser, Chinese, and English language preferences", () => {
+    const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
+    expect(source).toContain("codex-language");
+    expect(source).toContain("languagechange");
+    expect(source).toContain("跟随浏览器");
+    expect(source).toContain("Browser language");
+    expect(source).toContain("documentElement.lang");
+  });
+
   it("renders request and token analytics without prompt or response content fields", () => {
     const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
     expect(source).toContain("/admin/api/request-stats");
     expect(source).toContain("按模型汇总");
     expect(source).toContain("最近请求");
-    expect(source).toContain("Total Tokens");
+    expect(source).toContain("Total tokens");
+    expect(source).toContain("请求趋势");
+    expect(source).toContain("Model request distribution");
+    expect(source).toContain("requestTrendAria");
     expect(source).not.toContain("prompt");
     expect(source).not.toContain("responseBody");
   });
@@ -230,7 +242,7 @@ describe("edge worker", () => {
     expect(source).toContain("刷新额度");
     expect(source).toContain("/admin/api/models");
     expect(source).toContain("可用模型");
-    expect(source).toContain("Workspace · ");
+    expect(source).toContain("Workspace");
   });
 
   it("provides editable persisted runtime settings without exposing secrets", () => {
@@ -245,7 +257,7 @@ describe("edge worker", () => {
     const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
     expect(source).toContain("使用 ChatGPT 登录");
     expect(source).toContain("/admin/api/oauth/");
-    expect(source).toContain("一次性代码");
+    expect(source).toContain("设备代码");
     expect(source).not.toContain("deviceAuthId");
     expect(source).not.toContain("/oauth/token");
   });
@@ -253,7 +265,7 @@ describe("edge worker", () => {
   it("offers PKCE callback URL login as a device-code fallback", () => {
     const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
     expect(source).toContain("复制链接登录");
-    expect(source).toContain("http://localhost:1455/auth/callback?code=");
+    expect(source).toContain("http://localhost:1455/auth/callback?...");
     expect(source).toContain("完成导入");
     expect(source).not.toContain("codeVerifier");
   });

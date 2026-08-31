@@ -367,7 +367,7 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
     const response = await upstreamFetch(prepared.upstreamUrl, {
       method: prepared.method,
       headers: upstreamHeaders(request, account, prepared.kind),
-      body: prepared.body,
+      body: prepared.body as BodyInit | undefined,
       redirect: "manual",
     });
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
