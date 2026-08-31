@@ -6,11 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
-      { "name": "ACCOUNT_POOL", "class_name": "AccountPool" }
+      { "name": "ACCOUNT_POOL", "class_name": "AccountPool" },
+      { "name": "PROXY_EXECUTOR", "class_name": "ProxyExecutor" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AccountPool"] }
+    { "tag": "v1", "new_sqlite_classes": ["AccountPool"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProxyExecutor"] }
   ],
   "vpc_networks": [
     {

@@ -18,6 +18,7 @@ import { handleMcp } from "./mcp";
 
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace<AccountPool>;
+  PROXY_EXECUTOR: DurableObjectNamespace<ProxyExecutor>;
   NATIVE_EGRESS: Fetcher;
   ADMIN_API_KEY?: string;
   KEY_ENCRYPTION_SECRET: string;
@@ -29,7 +30,10 @@ const SESSION_MAX_AGE = 8 * 60 * 60;
 const MODEL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MODEL_CATALOG_CACHE_KEY = "model-catalog-cache";
 const MAX_RETRY_RESPONSE_BYTES = 64 * 1024;
+const PROXY_EXECUTOR_SHARDS = 32;
 const encoder = new TextEncoder();
+
+type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 
 interface ModelCatalogCache {
   status: number;
@@ -235,6 +239,21 @@ export class AccountPool extends DurableObject<Env> {
   }
 }
 
+export class ProxyExecutor extends DurableObject<Env> {
+  async fetch(request: Request): Promise<Response> {
+    try {
+      const pathname = new URL(request.url).pathname;
+      if (!isProxyRoute(pathname)) return json({ error: "Not found" }, 404);
+      if (pathname === "/mcp" || pathname.startsWith("/mcp/")) {
+        return await handleMcp(request, (apiRequest) => proxyWithFailover(apiRequest, this.env, this.ctx));
+      }
+      return await proxyWithFailover(request, this.env, this.ctx);
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
+}
+
 export const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
@@ -256,14 +275,11 @@ export const worker = {
         return redirect("/", `${UI_COOKIE}=1; Secure; SameSite=Strict; Path=/; Max-Age=31536000`);
       }
       if (url.pathname.startsWith("/admin/api/")) {
-        return await handleAdmin(request, env, ctx);
+        return await handleAdmin(request, env);
       }
       if (!isProxyRoute(url.pathname)) return json({ error: "Not found" }, 404);
       if (!await validProxyAuth(request, env)) return json({ error: "Unauthorized" }, 401);
-      if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
-        return await handleMcp(request, (apiRequest) => proxyWithFailover(apiRequest, env, ctx));
-      }
-      return await proxyWithFailover(request, env, ctx);
+      return await proxyExecutorStub(env, request).fetch(request);
     } catch (error) {
       return errorResponse(error);
     }
@@ -272,7 +288,7 @@ export const worker = {
 
 export default worker;
 
-async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleAdmin(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/admin/api/session" && request.method === "POST") {
     enforceSameOrigin(request);
@@ -295,7 +311,10 @@ async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): P
   if (url.pathname === "/admin/api/models" && request.method === "GET") {
     const upstreamURL = new URL("/v1/models", request.url);
     if (url.searchParams.get("refresh") === "1") upstreamURL.searchParams.set("refresh", "1");
-    return cloneWithSecurityHeaders(await proxyWithFailover(new Request(upstreamURL), env, ctx));
+    const upstreamRequest = new Request(upstreamURL, {
+      headers: copySessionAffinityHeaders(request),
+    });
+    return cloneWithSecurityHeaders(await proxyExecutorStub(env, upstreamRequest).fetch(upstreamRequest));
   }
 
   const stub = accountPoolStub(env);
@@ -308,7 +327,7 @@ async function handleAdmin(request: Request, env: Env, ctx: ExecutionContext): P
   return cloneWithSecurityHeaders(response);
 }
 
-async function proxyWithFailover(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilContext): Promise<Response> {
   const startedAt = Date.now();
   const url = new URL(request.url);
   const modelCatalogRequest = request.method === "GET" && url.pathname === "/v1/models";
@@ -431,7 +450,7 @@ async function putModelCatalogCache(env: Env, response: Response, body: string):
 function trackRequestResponse(
   response: Response,
   env: Env,
-  ctx: ExecutionContext,
+  ctx: WaitUntilContext,
   metadata: RequestMetadata,
   accountId: string,
   startedAt: number,
@@ -507,6 +526,33 @@ async function reportAccount(env: Env, id: string, status: number, retryAfterSec
 
 function accountPoolStub(env: Env): DurableObjectStub {
   return env.ACCOUNT_POOL.get(env.ACCOUNT_POOL.idFromName("global"));
+}
+
+function proxyExecutorStub(env: Env, request: Request): DurableObjectStub<ProxyExecutor> {
+  const affinity = request.headers.get("x-session-affinity") ||
+    request.headers.get("x-session-id") || request.headers.get("session-id");
+  const shard = affinity
+    ? stableShard(affinity.slice(0, 256), PROXY_EXECUTOR_SHARDS)
+    : crypto.getRandomValues(new Uint8Array(1))[0] % PROXY_EXECUTOR_SHARDS;
+  return env.PROXY_EXECUTOR.getByName(`proxy-${shard}`);
+}
+
+function stableShard(value: string, shardCount: number): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % shardCount;
+}
+
+function copySessionAffinityHeaders(request: Request): Headers {
+  const headers = new Headers();
+  for (const name of ["x-session-affinity", "x-session-id", "session-id"]) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return headers;
 }
 
 function isProxyRoute(pathname: string): boolean {

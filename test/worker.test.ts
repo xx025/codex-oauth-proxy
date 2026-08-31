@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { worker } from "../src/index";
+import { ProxyExecutor, worker } from "../src/index";
 import { RequestRecordInput } from "../src/pool";
 import { ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
@@ -107,15 +107,42 @@ function environment(options: {
       return Response.json({ ok: true });
     },
   };
+  let env: {
+    ACCOUNT_POOL: { idFromName: () => DurableObjectId; get: () => DurableObjectStub };
+    PROXY_EXECUTOR: { getByName: (name: string) => DurableObjectStub<ProxyExecutor> };
+    NATIVE_EGRESS: { fetch: (request: Request) => Promise<Response> };
+    ADMIN_API_KEY: string;
+    KEY_ENCRYPTION_SECRET: string;
+  };
+  const executorShards: string[] = [];
+  const proxyExecutor = {
+    getByName(name: string) {
+      executorShards.push(name);
+      return {
+        async fetch(request: Request) {
+          const waits: Promise<unknown>[] = [];
+          const instance = new ProxyExecutor({
+            waitUntil(promise: Promise<unknown>) { waits.push(promise); },
+          } as unknown as DurableObjectState, env as never);
+          const response = await instance.fetch(request);
+          await Promise.all(waits);
+          return response;
+        },
+      } as unknown as DurableObjectStub<ProxyExecutor>;
+    },
+  };
+  env = {
+    ACCOUNT_POOL: { idFromName: () => ({}) as DurableObjectId, get: () => stub as unknown as DurableObjectStub },
+    PROXY_EXECUTOR: proxyExecutor,
+    NATIVE_EGRESS: { fetch: options.upstream },
+    ADMIN_API_KEY: "admin-secret",
+    KEY_ENCRYPTION_SECRET: "app-secret",
+  };
   return {
     reports,
     records,
-    env: {
-      ACCOUNT_POOL: { idFromName: () => ({}) as DurableObjectId, get: () => stub as unknown as DurableObjectStub },
-      NATIVE_EGRESS: { fetch: options.upstream },
-      ADMIN_API_KEY: "admin-secret",
-      KEY_ENCRYPTION_SECRET: "app-secret",
-    },
+    executorShards,
+    env,
   };
 }
 
@@ -367,7 +394,7 @@ describe("edge worker", () => {
       expect(body.max_output_tokens).toBeUndefined();
       return responsesStream();
     });
-    const { env, records } = environment({ upstream });
+    const { env, records, executorShards } = environment({ upstream });
     const { ctx, waits } = context();
     const response = await worker.fetch(new Request("https://example.test/v1/responses", {
       method: "POST",
@@ -387,6 +414,8 @@ describe("edge worker", () => {
     expect(await response.json()).toMatchObject({ id: "resp_test" });
     await Promise.all(waits);
     expect(upstream).toHaveBeenCalledTimes(1);
+    expect(executorShards).toHaveLength(1);
+    expect(executorShards[0]).toMatch(/^proxy-\d+$/);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ endpoint: "/v1/responses", accountId: "a", status: 200 });
   });

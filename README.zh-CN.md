@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-兼容 OpenAI API 的多账号 OAuth 网关。应用由 TypeScript 单语言实现，API、管理面板、OAuth、账号调度与流式转换均部署在一个 Cloudflare Worker 中；持久状态由 Durable Object 管理。
+兼容 OpenAI API 的多账号 OAuth 网关。应用由 TypeScript 单语言实现，API、管理面板、OAuth、账号调度与流式转换全部部署在 Cloudflare Workers；持久状态和高 CPU 代理执行由 Durable Object 承担。
 
 本仓库不包含本地应用服务、容器、原生二进制或 WebAssembly。由于上游拒绝普通 Worker 出口 IP，上游请求必须通过 `NATIVE_EGRESS` Cloudflare VPC 绑定转发，绑定缺失时会直接失败，不会回退到普通出口。
 
@@ -29,13 +29,16 @@ Cloudflare Worker（TypeScript）
           ├── AccountPool Durable Object
           │     账号、OAuth、密钥、统计、冷却状态
           │
-          └── NATIVE_EGRESS VPC Network
+          └── ProxyExecutor Durable Objects（32 分片）
+                    请求转换、故障转移、流式处理
+                    │
+                    └── NATIVE_EGRESS VPC Network
                     │
                     ▼
           chatgpt.com / auth.openai.com
 ```
 
-VPC/Tunnel 只承担固定网络出口；本项目本身没有需要在出口节点运行的应用或容器。
+入口 Worker 只负责认证并转交请求，不解析大型请求体。`ProxyExecutor` 在 Durable Object 的 CPU 限额内完成转换与流式处理，不会持久化提示词或响应。VPC/Tunnel 只承担固定网络出口；本项目没有需要在出口节点运行的应用或容器。
 
 ## 部署前提
 

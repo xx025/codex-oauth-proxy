@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-An OpenAI-compatible, multi-account OAuth gateway implemented entirely in TypeScript. The API, administration UI, OAuth flows, account routing, and streaming conversion run in one Cloudflare Worker; durable state lives in a Durable Object.
+An OpenAI-compatible, multi-account OAuth gateway implemented entirely in TypeScript. The API, administration UI, OAuth flows, account routing, and streaming conversion run on Cloudflare Workers; durable state and CPU-intensive proxy execution use Durable Objects.
 
 This repository contains no local application service, container, native binary, or WebAssembly runtime. Because the upstream rejects ordinary Worker egress IPs, every upstream request must use the `NATIVE_EGRESS` Cloudflare VPC binding. Requests fail closed if that binding is unavailable.
 
@@ -29,13 +29,16 @@ Cloudflare Worker (TypeScript)
              ├── AccountPool Durable Object
              │     accounts, OAuth, keys, metrics, cooldowns
              │
-             └── NATIVE_EGRESS VPC Network
+             └── ProxyExecutor Durable Objects (32 shards)
+                       request conversion, failover, streaming
+                       │
+                       └── NATIVE_EGRESS VPC Network
                        │
                        ▼
              chatgpt.com / auth.openai.com
 ```
 
-The VPC/Tunnel supplies only the accepted network egress. This project does not run an application process or container on the egress node.
+The entry Worker authenticates requests and delegates proxy work without parsing large bodies. `ProxyExecutor` instances perform conversion and streaming within Durable Object CPU limits; they do not persist prompts or responses. The VPC/Tunnel supplies only the accepted network egress, and no application process or container runs on the egress node.
 
 ## Prerequisites
 
