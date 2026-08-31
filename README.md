@@ -8,6 +8,10 @@ This repository contains no local application service, container, native binary,
 
 > The upstream interface is not a documented, stable public API and may change with the official client. Use only accounts you control and follow the applicable terms.
 
+## Screenshot
+
+![Administration UI](docs/image.png)
+
 ## Features
 
 - OpenAI-compatible Models, Chat Completions, and Responses APIs

@@ -1,6 +1,6 @@
-export type RecentRequest = { createdAt?: unknown; status?: unknown; usage?: { available?: boolean; totalTokens?: unknown } };
-export type TrendBucket = { start: number; end: number; requests: number; successful: number; tokens: number };
-export type ModelCount = { model: string; requests: number };
+type RecentRequest = { createdAt?: unknown; status?: unknown; usage?: { available?: boolean; totalTokens?: unknown } };
+type TrendBucket = { start: number; end: number; requests: number; successful: number; tokens: number };
+type ModelCount = { model: string; requests: number };
 
 export function aggregateRequestTrend(records: readonly RecentRequest[], bucketCount = 12): TrendBucket[] {
   const valid = records.map((record) => ({ record, time: Number(record.createdAt) })).filter(({ time }) => Number.isFinite(time) && time > 0).sort((a, b) => a.time - b.time);

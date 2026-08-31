@@ -10,8 +10,6 @@ export type View =
   | "settings";
 export type IconName =
   | View
-  | "moon"
-  | "language"
   | "logout"
   | "cloud"
   | "close";
@@ -47,13 +45,6 @@ const iconPaths: Record<IconName, ComponentChildren> = {
     <>
       <circle cx="12" cy="12" r="3" />
       <path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.5h-4L10.5 6A7 7 0 0 0 9 7.1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7 7 0 0 0 1.5 1.1l.3 2.5h4L15 18a7 7 0 0 0 1.5-1.1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z" />
-    </>
-  ),
-  moon: <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" />,
-  language: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
     </>
   ),
   logout: <path d="M14 8V5H5v14h9v-3M10 12h10m-3-3 3 3-3 3" />,

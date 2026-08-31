@@ -127,7 +127,7 @@ function Root() {
     setLanguageState(value);
   };
   return (
-    <I18nProvider locale={locale} preference={language}>
+    <I18nProvider locale={locale}>
       <App language={language} setLanguage={setLanguage} />
     </I18nProvider>
   );

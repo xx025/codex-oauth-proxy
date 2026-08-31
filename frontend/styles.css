@@ -19,8 +19,6 @@
   --brand-border: #b4d6f5;
   --success: #0e7a0d;
   --success-bg: #f1faf1;
-  --warning: #8a5d00;
-  --warning-bg: #fff8e8;
   --danger: #bc2f32;
   --danger-bg: #fdf3f4;
   --shadow: 0 2px 8px #00000012, 0 1px 2px #0000000a;
@@ -54,8 +52,6 @@
   --brand-border: #326b9e;
   --success: #54c052;
   --success-bg: #163d20;
-  --warning: #f0bd54;
-  --warning-bg: #4a3512;
   --danger: #ff7b7e;
   --danger-bg: #4d2225;
   --shadow: 0 2px 8px #0008, 0 1px 2px #0006;
@@ -89,8 +85,6 @@
     --brand-border: #326b9e;
     --success: #54c052;
     --success-bg: #163d20;
-    --warning: #f0bd54;
-    --warning-bg: #4a3512;
     --danger: #ff7b7e;
     --danger-bg: #4d2225;
     --shadow: 0 2px 8px #0008, 0 1px 2px #0006;
@@ -137,16 +131,6 @@ code {
     SFMono-Regular,
     Consolas,
     monospace;
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 .icon {
   width: 18px;
@@ -269,22 +253,6 @@ code {
   display: grid;
   gap: 8px;
   margin-top: auto;
-}
-.theme-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 7px;
-}
-.theme-control select {
-  width: 100%;
-  min-width: 0;
-  height: 30px;
-  padding: 0 5px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--text);
 }
 .service-state {
   display: flex;
@@ -1221,18 +1189,6 @@ tbody tr:last-child td {
   .sidebar nav a.active::before {
     left: 2px;
   }
-  .theme-control {
-    position: relative;
-    justify-content: center;
-    height: 38px;
-  }
-  .theme-control select {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-  }
   .service-state {
     justify-content: center;
   }
@@ -1294,16 +1250,6 @@ tbody tr:last-child td {
   .mobile-bar select {
     width: 124px;
   }
-  .mobile-bar .theme-control {
-    width: 38px;
-    padding: 0;
-  }
-  .mobile-bar .theme-control select {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    opacity: 0;
-  }
   .workspace > main {
     padding: 24px 16px 40px;
   }
@@ -1341,7 +1287,6 @@ tbody tr:last-child td {
     padding: 10px;
     border: 1px solid var(--line);
     border-radius: 5px;
-    background: var(--surface-raised);
   }
   .account-row > div:nth-last-child(2) {
     display: block;

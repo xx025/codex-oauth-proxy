@@ -10,7 +10,6 @@ const en = {
   languageSystem: "Browser language",
   languageChinese: "Chinese",
   languageEnglish: "English",
-  appearance: "Appearance",
   theme: "Color theme",
   themeSystem: "Use system setting",
   themeLight: "Light",
@@ -273,7 +272,6 @@ const zh: Record<TranslationKey, string> = {
   languageSystem: "跟随浏览器",
   languageChinese: "中文",
   languageEnglish: "英文",
-  appearance: "外观",
   theme: "颜色主题",
   themeSystem: "跟随系统",
   themeLight: "浅色",
@@ -539,22 +537,18 @@ export function translate(
 
 type I18nValue = {
   locale: Locale;
-  preference: LanguagePreference;
   t: (key: TranslationKey, values?: Record<string, string | number>) => string;
 };
 const I18nContext = createContext<I18nValue>({
   locale: "en",
-  preference: "system",
   t: (key, values) => translate("en", key, values),
 });
 
 export function I18nProvider({
   locale,
-  preference,
   children,
 }: {
   locale: Locale;
-  preference: LanguagePreference;
   children: ComponentChildren;
 }) {
   return createElement(
@@ -562,7 +556,6 @@ export function I18nProvider({
     {
       value: {
         locale,
-        preference,
         t: (key, values) => translate(locale, key, values),
       },
     },

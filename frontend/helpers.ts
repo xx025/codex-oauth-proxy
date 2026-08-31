@@ -21,8 +21,8 @@ export type ModelMetadata = {
   };
 };
 
-export type ModelFamily = "codex" | "gpt" | "reasoning" | "other";
-export type ModelGroup = {
+type ModelFamily = "codex" | "gpt" | "reasoning" | "other";
+type ModelGroup = {
   family: ModelFamily;
   models: Array<ModelMetadata & { reasoning_efforts: string[] }>;
 };
@@ -143,7 +143,7 @@ export function groupModels(models: ModelMetadata[]): ModelGroup[] {
     }));
 }
 
-export function inferModelFamily(model: ModelMetadata): ModelFamily {
+function inferModelFamily(model: ModelMetadata): ModelFamily {
   const value =
     `${model.family || ""} ${model.category || ""} ${model.base_model || ""} ${model.id}`.toLowerCase();
   if (value.includes("codex")) return "codex";
