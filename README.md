@@ -24,21 +24,26 @@ This repository contains no local application service, container, native binary,
 API clients / administrators
              │
              ▼
-Cloudflare Worker (TypeScript)
+Entry Worker (routing and authentication)
              │
-             ├── AccountPool Durable Object
-             │     accounts, OAuth, keys, metrics, cooldowns
+             ├── Administration ────────► AccountPool Durable Object
+             │                            accounts, OAuth, keys, policy, metrics
              │
-             └── ProxyExecutor Durable Objects (32 shards)
-                       request conversion, failover, streaming
-                       │
-                       └── NATIVE_EGRESS VPC Network
-                       │
-                       ▼
-             chatgpt.com / auth.openai.com
+             └── OpenAI API / MCP ─────► ProxyExecutor Durable Objects
+                                          32 execution shards
+                                             │             │
+                                             │             └──► AccountPool
+                                             │                  account selection and outcomes
+                                             ▼
+                                      NATIVE_EGRESS VPC Network
+                                             │
+                                             ▼
+                                  chatgpt.com / auth.openai.com
 ```
 
-The entry Worker authenticates requests and delegates proxy work without parsing large bodies. `ProxyExecutor` instances perform conversion and streaming within Durable Object CPU limits; they do not persist prompts or responses. The VPC/Tunnel supplies only the accepted network egress, and no application process or container runs on the egress node.
+The gateway separates its control plane from its data plane. `AccountPool` is the control plane for durable account state, OAuth credentials, client keys, routing policy, cooldowns, and aggregate metrics. Sharded `ProxyExecutor` objects are the data plane: they transform requests, select accounts through `AccountPool`, fail over between accounts, and stream responses back to the original client connection.
+
+Long-running requests remain on this same streaming path; they are not converted into background jobs. Execution shards isolate request processing and scale horizontally, while the centralized account pool preserves consistent routing decisions. Prompts and responses are never written to Durable Object storage. The VPC/Tunnel is only the network egress plane, with no application service or container running on the egress node.
 
 ## Prerequisites
 

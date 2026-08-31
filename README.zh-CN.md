@@ -24,21 +24,26 @@
 API 客户端 / 管理员
           │
           ▼
-Cloudflare Worker（TypeScript）
+入口 Worker（路由与认证）
           │
-          ├── AccountPool Durable Object
-          │     账号、OAuth、密钥、统计、冷却状态
+          ├── 管理请求 ─────────────► AccountPool Durable Object
+          │                           账号、OAuth、密钥、策略、统计
           │
-          └── ProxyExecutor Durable Objects（32 分片）
-                    请求转换、故障转移、流式处理
-                    │
-                    └── NATIVE_EGRESS VPC Network
-                    │
-                    ▼
-          chatgpt.com / auth.openai.com
+          └── OpenAI API / MCP ────► ProxyExecutor Durable Objects
+                                      32 个执行分片
+                                          │            │
+                                          │            └──► AccountPool
+                                          │                 账号选择与结果反馈
+                                          ▼
+                                  NATIVE_EGRESS VPC Network
+                                          │
+                                          ▼
+                               chatgpt.com / auth.openai.com
 ```
 
-入口 Worker 只负责认证并转交请求，不解析大型请求体。`ProxyExecutor` 在 Durable Object 的 CPU 限额内完成转换与流式处理，不会持久化提示词或响应。VPC/Tunnel 只承担固定网络出口；本项目没有需要在出口节点运行的应用或容器。
+网关将控制面与数据面分离。`AccountPool` 是控制面，统一管理持久化账号状态、OAuth 凭据、客户端密钥、调度策略、冷却状态和聚合统计。分片的 `ProxyExecutor` 是数据面，负责转换请求、通过 `AccountPool` 选择账号、执行账号故障转移，并沿原始客户端连接流式返回响应。
+
+长时间请求仍沿用同一条流式数据路径，不会转换成后台任务。执行分片隔离请求处理并支持横向扩展，集中式账号池则保证调度决策一致。提示词与响应不会写入 Durable Object 存储。VPC/Tunnel 仅作为网络出口层，出口节点不运行应用服务或容器。
 
 ## 部署前提
 
