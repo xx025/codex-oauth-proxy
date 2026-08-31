@@ -232,7 +232,7 @@ describe("edge worker", () => {
     expect(source).toContain("请求趋势");
     expect(source).toContain("Model request distribution");
     expect(source).toContain("requestTrendAria");
-    expect(source).not.toContain("prompt");
+    expect(source).not.toContain("promptContent");
     expect(source).not.toContain("responseBody");
   });
 

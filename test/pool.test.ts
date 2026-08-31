@@ -3,11 +3,19 @@ import { AccountPoolCore, PoolState, parseImportPayload } from "../src/pool";
 
 class MemoryStorage {
   value?: PoolState;
-  async get() { return this.value ? structuredClone(this.value) : undefined; }
-  async put(value: PoolState) { this.value = structuredClone(value); }
+  async get() {
+    return this.value ? structuredClone(this.value) : undefined;
+  }
+  async put(value: PoolState) {
+    this.value = structuredClone(value);
+  }
 }
 
-const credential = (accountId: string, name?: string, principalId = `user-${accountId}`) => ({
+const credential = (
+  accountId: string,
+  name?: string,
+  principalId = `user-${accountId}`,
+) => ({
   name,
   accessToken: `access-${accountId}`,
   refreshToken: `refresh-${accountId}`,
@@ -17,7 +25,8 @@ const credential = (accountId: string, name?: string, principalId = `user-${acco
 });
 
 function jwt(payload: Record<string, unknown>): string {
-  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encode({ alg: "none" })}.${encode(payload)}.signature`;
 }
 
@@ -39,9 +48,14 @@ describe("AccountPoolCore", () => {
       authCooldownSeconds: 600,
       serverErrorCooldownSeconds: 25,
     });
-    expect(settings).toMatchObject({ selectionStrategy: "least_failures", maxAccountAttempts: 5 });
+    expect(settings).toMatchObject({
+      selectionStrategy: "least_failures",
+      maxAccountAttempts: 5,
+    });
     expect(await new AccountPoolCore(storage).getSettings()).toEqual(settings);
-    await expect(pool.updateSettings({ maxAccountAttempts: 11 })).rejects.toMatchObject({ status: 400 });
+    await expect(
+      pool.updateSettings({ maxAccountAttempts: 11 }),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("aggregates request and token usage by model while bounding recent records", async () => {
@@ -55,7 +69,13 @@ describe("AccountPoolCore", () => {
       durationMs: 125.4,
       streaming: true,
       accountId: "internal-account-id",
-      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedTokens: 3, available: true },
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        cachedTokens: 3,
+        available: true,
+      },
     });
     await pool.recordRequest({
       model: "gpt-5.6-sol",
@@ -63,7 +83,13 @@ describe("AccountPoolCore", () => {
       status: 429,
       durationMs: 20,
       streaming: false,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, available: false },
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0,
+        available: false,
+      },
     });
 
     const snapshot = await pool.requestStats();
@@ -77,7 +103,9 @@ describe("AccountPoolCore", () => {
       cachedTokens: 3,
       meteredRequests: 1,
     });
-    expect(snapshot.models).toMatchObject([{ model: "gpt-5.6-sol", requests: 2, totalTokens: 15 }]);
+    expect(snapshot.models).toMatchObject([
+      { model: "gpt-5.6-sol", requests: 2, totalTokens: 15 },
+    ]);
     expect(snapshot.recent).toHaveLength(2);
     expect(snapshot.recent[0]).toMatchObject({ status: 429, durationMs: 20 });
 
@@ -88,25 +116,41 @@ describe("AccountPoolCore", () => {
         status: 200,
         durationMs: 1,
         streaming: false,
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cachedTokens: 0, available: true },
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+          cachedTokens: 0,
+          available: true,
+        },
       });
     }
     const bounded = await pool.requestStats();
     expect(bounded.recent).toHaveLength(200);
     expect(bounded.retentionLimit).toBe(200);
-    expect(bounded.models.find((model) => model.model === "gpt-5.6-terra")?.requests).toBe(205);
+    expect(
+      bounded.models.find((model) => model.model === "gpt-5.6-terra")?.requests,
+    ).toBe(205);
   });
 
   it("rejects invalid request record metadata", async () => {
     const pool = new AccountPoolCore(new MemoryStorage());
-    await expect(pool.recordRequest({
-      model: "x".repeat(161),
-      endpoint: "/v1/responses",
-      status: 200,
-      durationMs: 1,
-      streaming: false,
-      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cachedTokens: 0, available: false },
-    })).rejects.toMatchObject({ status: 400 });
+    await expect(
+      pool.recordRequest({
+        model: "x".repeat(161),
+        endpoint: "/v1/responses",
+        status: 200,
+        durationMs: 1,
+        streaming: false,
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          available: false,
+        },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("imports, persists, and never lists tokens", async () => {
@@ -115,7 +159,11 @@ describe("AccountPoolCore", () => {
     await pool.importAccount(credential("a", "Primary"));
     const listed = await pool.list();
     expect(listed).toHaveLength(1);
-    expect(listed[0]).toMatchObject({ name: "Primary", accountId: "a", enabled: true });
+    expect(listed[0]).toMatchObject({
+      name: "Primary",
+      accountId: "a",
+      enabled: true,
+    });
     expect(listed[0]).not.toHaveProperty("accessToken");
     expect(listed[0]).not.toHaveProperty("refreshToken");
     expect((await new AccountPoolCore(storage).list())[0].accountId).toBe("a");
@@ -135,12 +183,28 @@ describe("AccountPoolCore", () => {
   it("keeps different users in the same Team workspace as separate accounts", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
-    const first = await pool.importAccount({ ...credential("team", "Alice", "user-alice"), email: "alice@example.com" });
-    const second = await pool.importAccount({ ...credential("team", "Bob", "user-bob"), email: "bob@example.com" });
+    const first = await pool.importAccount({
+      ...credential("team", "Alice", "user-alice"),
+      email: "alice@example.com",
+    });
+    const second = await pool.importAccount({
+      ...credential("team", "Bob", "user-bob"),
+      email: "bob@example.com",
+    });
 
     expect(await pool.list()).toMatchObject([
-      { id: first.id, accountId: "team", principalId: "user-alice", email: "alice@example.com" },
-      { id: second.id, accountId: "team", principalId: "user-bob", email: "bob@example.com" },
+      {
+        id: first.id,
+        accountId: "team",
+        principalId: "user-alice",
+        email: "alice@example.com",
+      },
+      {
+        id: second.id,
+        accountId: "team",
+        principalId: "user-bob",
+        email: "bob@example.com",
+      },
     ]);
     expect((await pool.select()).principalId).toBe("user-alice");
     expect((await pool.select()).principalId).toBe("user-bob");
@@ -149,8 +213,14 @@ describe("AccountPoolCore", () => {
   it("updates only the matching workspace and user identity on re-import", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
-    const alice = await pool.importAccount({ ...credential("team", "Alice", "user-alice"), email: "alice@example.com" });
-    await pool.importAccount({ ...credential("team", "Bob", "user-bob"), email: "bob@example.com" });
+    const alice = await pool.importAccount({
+      ...credential("team", "Alice", "user-alice"),
+      email: "alice@example.com",
+    });
+    await pool.importAccount({
+      ...credential("team", "Bob", "user-bob"),
+      email: "bob@example.com",
+    });
     const updated = await pool.importAccount({
       ...credential("team", "Alice Updated", "user-alice"),
       email: "ALICE@EXAMPLE.COM",
@@ -159,29 +229,44 @@ describe("AccountPoolCore", () => {
 
     expect(updated.id).toBe(alice.id);
     expect(await pool.list()).toHaveLength(2);
-    expect(storage.value?.accounts.find((account) => account.id === alice.id)?.accessToken).toBe("rotated-access");
-    expect(storage.value?.accounts.find((account) => account.principalId === "user-bob")?.name).toBe("Bob");
+    expect(
+      storage.value?.accounts.find((account) => account.id === alice.id)
+        ?.accessToken,
+    ).toBe("rotated-access");
+    expect(
+      storage.value?.accounts.find(
+        (account) => account.principalId === "user-bob",
+      )?.name,
+    ).toBe("Bob");
   });
 
   it("rejects imports that do not contain a stable user identity", async () => {
     const pool = new AccountPoolCore(new MemoryStorage(), vi.fn(), () => 1_000);
-    await expect(pool.importAccount({
-      accessToken: "access",
-      refreshToken: "refresh",
-      expiresAt: 10_000,
-      accountId: "team",
-      principalId: "",
-    })).rejects.toMatchObject({ status: 400 });
+    await expect(
+      pool.importAccount({
+        accessToken: "access",
+        refreshToken: "refresh",
+        expiresAt: 10_000,
+        accountId: "team",
+        principalId: "",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("refreshes expiring credentials and persists rotated refresh tokens", async () => {
     const storage = new MemoryStorage();
-    const oauthFetch = vi.fn(async () => Response.json({
-      access_token: "new-access",
-      refresh_token: "new-refresh",
-      expires_in: 7200,
-    }));
-    const pool = new AccountPoolCore(storage, oauthFetch as typeof fetch, () => 1_000_000);
+    const oauthFetch = vi.fn(async () =>
+      Response.json({
+        access_token: "new-access",
+        refresh_token: "new-refresh",
+        expires_in: 7200,
+      }),
+    );
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as typeof fetch,
+      () => 1_000_000,
+    );
     await pool.importAccount({ ...credential("a"), expiresAt: 1_000_001 });
     const selected = await pool.select();
     expect(selected.accessToken).toBe("new-access");
@@ -192,32 +277,64 @@ describe("AccountPoolCore", () => {
 
   it("refreshes and persists redacted quota snapshots for each enabled account", async () => {
     const storage = new MemoryStorage();
-    const usageFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("https://chatgpt.com/backend-api/wham/usage");
-      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer access-a");
-      expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("a");
-      return Response.json({
-        rate_limit: {
-          primary_window: { used_percent: 25, limit_window_seconds: 18_000, reset_at: 2_000 },
-          secondary_window: { used_percent: 80, limit_window_seconds: 604_800, reset_at: 3_000 },
-        },
-        credits: { balance: 12.5 },
-      });
-    });
-    const pool = new AccountPoolCore(storage, usageFetch as typeof fetch, () => 1_000);
+    const usageFetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          "https://chatgpt.com/backend-api/wham/usage",
+        );
+        expect(new Headers(init?.headers).get("authorization")).toBe(
+          "Bearer access-a",
+        );
+        expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("a");
+        return Response.json({
+          rate_limit: {
+            primary_window: {
+              used_percent: 25,
+              limit_window_seconds: 18_000,
+              reset_at: 2_000,
+            },
+            secondary_window: {
+              used_percent: 80,
+              limit_window_seconds: 604_800,
+              reset_at: 3_000,
+            },
+          },
+          credits: { balance: 12.5 },
+        });
+      },
+    );
+    const pool = new AccountPoolCore(
+      storage,
+      usageFetch as typeof fetch,
+      () => 1_000,
+    );
     await pool.importAccount(credential("a", "Primary"));
 
     const [account] = await pool.refreshUsage();
 
     expect(account.usage).toEqual({
-      primary: { usedPercent: 25, remainingPercent: 75, windowMinutes: 300, resetsAt: 2_000 },
-      secondary: { usedPercent: 80, remainingPercent: 20, windowMinutes: 10_080, resetsAt: 3_000 },
+      primary: {
+        usedPercent: 25,
+        remainingPercent: 75,
+        windowSeconds: 18_000,
+        windowMinutes: 300,
+        resetsAt: 2_000,
+      },
+      secondary: {
+        usedPercent: 80,
+        remainingPercent: 20,
+        windowSeconds: 604_800,
+        windowMinutes: 10_080,
+        resetsAt: 3_000,
+      },
       creditsBalance: 12.5,
       capturedAt: 1_000,
     });
     expect(account).not.toHaveProperty("accessToken");
     expect(account).not.toHaveProperty("refreshToken");
-    expect(storage.value?.accounts[0].usage?.primary?.remainingPercent).toBe(75);
+    expect(storage.value?.accounts[0].usage?.primary?.remainingPercent).toBe(
+      75,
+    );
   });
 
   it("cools down rate-limited accounts and fails over", async () => {
@@ -238,9 +355,15 @@ describe("AccountPoolCore", () => {
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
     const first = await pool.importAccount(credential("a"));
     const second = await pool.importAccount(credential("b"));
-    await pool.updateSettings({ selectionStrategy: "least_failures", rateLimitCooldownSeconds: 120 });
+    await pool.updateSettings({
+      selectionStrategy: "least_failures",
+      rateLimitCooldownSeconds: 120,
+    });
     await pool.report(first.id, 429);
-    expect(storage.value?.accounts.find((account) => account.id === first.id)?.cooldownUntil).toBe(121_000);
+    expect(
+      storage.value?.accounts.find((account) => account.id === first.id)
+        ?.cooldownUntil,
+    ).toBe(121_000);
     expect((await pool.select()).id).toBe(second.id);
   });
 
@@ -248,14 +371,21 @@ describe("AccountPoolCore", () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
     const account = await pool.importAccount(credential("a"));
-    expect(await pool.update(account.id, { enabled: false, name: "Paused" })).toMatchObject({ enabled: false, name: "Paused" });
+    expect(
+      await pool.update(account.id, { enabled: false, name: "Paused" }),
+    ).toMatchObject({ enabled: false, name: "Paused" });
     await pool.remove(account.id);
     expect(await pool.list()).toEqual([]);
   });
 
   it("creates, reveals, verifies, and revokes multiple encrypted proxy keys", async () => {
     const storage = new MemoryStorage();
-    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000, "encryption-secret");
+    const pool = new AccountPoolCore(
+      storage,
+      vi.fn(),
+      () => 1_000,
+      "encryption-secret",
+    );
     const first = await pool.generateProxyKey("Desktop");
     const second = await pool.generateProxyKey("Server");
     expect(first.key).toMatch(/^cp_[0-9a-f]{64}$/);
@@ -277,19 +407,30 @@ describe("AccountPoolCore", () => {
     expect(await pool.listProxyKeys()).toMatchObject([{ name: "Server" }]);
     expect(storage.value?.proxyKeys).toHaveLength(1);
     expect(storage.value?.proxyKeys?.[0].id).toBe(second.metadata.id);
-    await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({ status: 404 });
+    await expect(pool.revealProxyKey(first.metadata.id)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it("automatically removes previously revoked proxy keys when listing", async () => {
     const storage = new MemoryStorage();
-    const pool = new AccountPoolCore(storage, vi.fn(), () => 2_000, "encryption-secret");
+    const pool = new AccountPoolCore(
+      storage,
+      vi.fn(),
+      () => 2_000,
+      "encryption-secret",
+    );
     const active = await pool.generateProxyKey("Active");
     const revoked = await pool.generateProxyKey("Revoked");
-    const revokedRecord = storage.value?.proxyKeys?.find((record) => record.id === revoked.metadata.id);
+    const revokedRecord = storage.value?.proxyKeys?.find(
+      (record) => record.id === revoked.metadata.id,
+    );
     if (!revokedRecord) throw new Error("Expected generated proxy key");
     revokedRecord.revokedAt = 1_000;
 
-    expect(await pool.listProxyKeys()).toMatchObject([{ id: active.metadata.id, name: "Active" }]);
+    expect(await pool.listProxyKeys()).toMatchObject([
+      { id: active.metadata.id, name: "Active" },
+    ]);
     expect(storage.value?.proxyKeys).toHaveLength(1);
     expect(storage.value?.proxyKeys?.[0].id).toBe(active.metadata.id);
   });
@@ -298,10 +439,18 @@ describe("AccountPoolCore", () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage);
     const legacy = await pool.generateProxyKey("Temporary");
-    storage.value = { accounts: [], cursor: 0, proxyKeyHash: storage.value?.proxyKeys?.[0].keyHash };
+    storage.value = {
+      accounts: [],
+      cursor: 0,
+      proxyKeyHash: storage.value?.proxyKeys?.[0].keyHash,
+    };
     expect(await pool.verifyProxyKey(legacy.key)).toBe(true);
-    expect(await pool.listProxyKeys()).toMatchObject([{ id: "legacy", recoverable: false }]);
-    await expect(pool.revealProxyKey("legacy")).rejects.toMatchObject({ status: 410 });
+    expect(await pool.listProxyKeys()).toMatchObject([
+      { id: "legacy", recoverable: false },
+    ]);
+    await expect(pool.revealProxyKey("legacy")).rejects.toMatchObject({
+      status: 410,
+    });
     await pool.revokeProxyKey("legacy");
     expect(await pool.verifyProxyKey(legacy.key)).toBe(false);
     expect(await pool.listProxyKeys()).toEqual([]);
@@ -317,12 +466,16 @@ describe("parseImportPayload", () => {
         chatgpt_user_id: "user-member",
       },
     });
-    expect(parseImportPayload({ tokens: {
-      id_token: idToken,
-      access_token: "access",
-      refresh_token: "refresh",
-      expiresAt: 1234,
-    } })).toMatchObject({
+    expect(
+      parseImportPayload({
+        tokens: {
+          id_token: idToken,
+          access_token: "access",
+          refresh_token: "refresh",
+          expiresAt: 1234,
+        },
+      }),
+    ).toMatchObject({
       accessToken: "access",
       refreshToken: "refresh",
       accountId: "account",
@@ -341,10 +494,14 @@ describe("parseImportPayload", () => {
       },
       "https://api.openai.com/profile": { email: "access@example.com" },
     });
-    expect(parseImportPayload({ tokens: {
-      access_token: accessToken,
-      refresh_token: "refresh",
-    } })).toMatchObject({
+    expect(
+      parseImportPayload({
+        tokens: {
+          access_token: accessToken,
+          refresh_token: "refresh",
+        },
+      }),
+    ).toMatchObject({
       accountId: "account",
       principalId: "user-from-access",
       email: "access@example.com",
@@ -361,10 +518,17 @@ describe("parseImportPayload", () => {
         chatgpt_user_id: "chatgpt-user",
       },
     });
-    expect(parseImportPayload({ tokens: {
-      id_token: idToken,
-      access_token: accessToken,
-      refresh_token: "refresh",
-    } })).toMatchObject({ principalId: "chatgpt-user", email: "member@example.com" });
+    expect(
+      parseImportPayload({
+        tokens: {
+          id_token: idToken,
+          access_token: accessToken,
+          refresh_token: "refresh",
+        },
+      }),
+    ).toMatchObject({
+      principalId: "chatgpt-user",
+      email: "member@example.com",
+    });
   });
 });
