@@ -38,6 +38,8 @@ Durable Objects are created automatically during a successful Wrangler deploymen
 
 Cloudflare's Deploy button does not currently show a Tunnel ID input during the initial setup. The first deployment can create the Worker without VPC egress; add `CLOUDFLARE_TUNNEL_ID` under **Settings > Build > Build variables and secrets**, then retry the deployment before using the API.
 
+Need a VPC egress connector? See [cloud-router-vpc-egress](https://github.com/xx025/cloud-router-vpc-egress), a minimal `cloudflared` reference implementation that can be quickly deployed to Railway. For Cloudflare's official tunnel connector documentation, see [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/).
+
 See [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 
 ## Use

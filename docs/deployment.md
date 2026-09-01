@@ -14,6 +14,12 @@ Browser deployment is recommended. You do not need to download the repository or
 
 Durable Objects are created automatically during a successful Wrangler deployment. You do not need to create them manually.
 
+## VPC Egress Connector Reference
+
+CloudRouter requires Cloudflare VPC egress through `NATIVE_EGRESS`. If you need a minimal tunnel connector, use [cloud-router-vpc-egress](https://github.com/xx025/cloud-router-vpc-egress) as a reference implementation. It focuses on `cloudflared` only and includes a Railway quick deploy shortcut.
+
+Cloudflare's official `cloudflared` service documentation: [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/).
+
 ## Steps
 
 Click the button above to create the Worker project in Cloudflare.
