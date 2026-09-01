@@ -901,22 +901,26 @@ function Models({
                           )}{" "}
                           {t("context")}
                         </span>
-                        <span>
-                          {tokenLimit(
-                            locale,
-                            model.capabilities?.limits?.max_output_tokens,
-                            t("unknown"),
-                          )}{" "}
-                          {t("output")}
-                        </span>
-                        <span>
-                          {tokenLimit(
-                            locale,
-                            model.capabilities?.limits?.max_prompt_tokens,
-                            t("unknown"),
-                          )}{" "}
-                          {t("prompt")}
-                        </span>
+                        {typeof model.capabilities?.limits?.max_output_tokens === "number" && (
+                          <span>
+                            {tokenLimit(
+                              locale,
+                              model.capabilities.limits.max_output_tokens,
+                              t("unknown"),
+                            )}{" "}
+                            {t("output")}
+                          </span>
+                        )}
+                        {typeof model.capabilities?.limits?.max_prompt_tokens === "number" && (
+                          <span>
+                            {tokenLimit(
+                              locale,
+                              model.capabilities.limits.max_prompt_tokens,
+                              t("unknown"),
+                            )}{" "}
+                            {t("prompt")}
+                          </span>
+                        )}
                         {model.supported_endpoints?.map((endpoint) => (
                           <span>{t("endpointMetadata", { endpoint })}</span>
                         ))}

@@ -292,7 +292,6 @@ describe("Cloudflare-native API proxy", () => {
         limits: {
           max_context_window_tokens: 128_000,
           max_output_tokens: 16_000,
-          max_prompt_tokens: 128_000,
         },
         supports: { fast_mode: true },
       },

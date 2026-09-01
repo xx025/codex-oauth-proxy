@@ -893,13 +893,6 @@ function modelMetadata(model: JsonObject): JsonObject {
     "max_input_length",
     "maxInputLength",
   ]);
-  if (
-    limits.max_prompt_tokens === undefined &&
-    typeof limits.max_context_window_tokens === "number"
-  ) {
-    limits.max_prompt_tokens = limits.max_context_window_tokens;
-  }
-
   const supports: JsonObject = {};
   const sourceSupports = objectValue(sourceCapabilities?.supports);
   const supportAliases: Array<[string, string[]]> = [
