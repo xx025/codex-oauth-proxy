@@ -12,15 +12,26 @@
 
 ## 部署步骤
 
-点击上方按钮，在 Cloudflare 页面填写：
+点击上方按钮，先在 Cloudflare 中创建 Worker 项目。
+
+Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel/VPC ID 输入框，所以第一次部署可能会失败。项目创建后，在 Cloudflare 后台添加下面的配置，再重新部署即可。
+
+添加构建变量：
 
 - `CLOUDFLARE_TUNNEL_ID`：构建变量，填你的 Tunnel/VPC 出口 ID
+
+位置：**Worker > Settings > Build > Build variables and secrets**
+
+添加 Worker Secrets：
+
 - `KEY_ENCRYPTION_SECRET`：Worker Secret，填随机加密密钥
 - `ADMIN_API_KEY`：可选 Worker Secret；如果不用 Cloudflare Access 保护管理面板，则填写
 
-完成后 Cloudflare 会自动拉取代码、安装依赖、构建并部署 Worker。
+位置：**Worker > Settings > Variables and Secrets**
 
-如果首次部署提示缺少 `CLOUDFLARE_TUNNEL_ID`，在 Worker 的 **Settings > Build > Build variables and secrets** 添加该变量后重新部署即可。
+最后回到部署页面，点击 **Retry deployment**。
+
+Cloudflare 会自动拉取代码、安装依赖、构建并部署 Worker。
 
 ## 部署后
 

@@ -26,13 +26,15 @@
 
 ## 部署
 
-点击上方按钮即可在浏览器部署，不需要下载代码，不需要安装 Node.js，也不需要本地运行 npm。
+点击上方按钮即可在浏览器创建 Worker，不需要下载代码，不需要安装 Node.js，也不需要本地运行 npm。
 
-需要准备：
+首次重新部署前，在 Cloudflare 后台添加：
 
-- `CLOUDFLARE_TUNNEL_ID`：Cloudflare Tunnel/VPC 出口 ID，作为构建变量填写
-- `KEY_ENCRYPTION_SECRET`：Worker Secret，可用 `openssl rand -hex 32` 生成
-- `ADMIN_API_KEY`：可选 Worker Secret；如果管理域名没有使用 Cloudflare Access，则需要填写
+- 构建变量 `CLOUDFLARE_TUNNEL_ID`：Cloudflare Tunnel/VPC 出口 ID
+- Worker Secret `KEY_ENCRYPTION_SECRET`：随机长字符串，可用 `openssl rand -hex 32` 生成
+- 可选 Worker Secret `ADMIN_API_KEY`：仅在管理域名没有使用 Cloudflare Access 时需要
+
+Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输入框。先创建项目，然后进入 **Settings > Build > Build variables and secrets** 添加 `CLOUDFLARE_TUNNEL_ID`，再重新部署。
 
 中文部署说明见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
 

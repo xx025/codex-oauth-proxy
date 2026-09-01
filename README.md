@@ -26,13 +26,15 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 
 ## Deploy
 
-Click the button above to deploy in your browser. No local download, Node.js install, or npm command is required.
+Click the button above to create the Worker in your browser. No local download, Node.js install, or npm command is required.
 
-You need:
+Before retrying the first deployment, add these in the Cloudflare dashboard:
 
-- `CLOUDFLARE_TUNNEL_ID`: your Cloudflare Tunnel/VPC egress ID, used as a build variable
-- `KEY_ENCRYPTION_SECRET`: a Worker secret, for example a random `openssl rand -hex 32` value
-- `ADMIN_API_KEY`: optional Worker secret if the admin domain is not protected by Cloudflare Access
+- Build variable `CLOUDFLARE_TUNNEL_ID`: your Cloudflare Tunnel/VPC egress ID
+- Worker secret `KEY_ENCRYPTION_SECRET`: a random value, for example `openssl rand -hex 32`
+- Optional Worker secret `ADMIN_API_KEY`: required only if the admin domain is not protected by Cloudflare Access
+
+Cloudflare's Deploy button does not currently show a Tunnel ID input during the initial setup. Create the project first, add `CLOUDFLARE_TUNNEL_ID` under **Settings > Build > Build variables and secrets**, then retry the deployment.
 
 See [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md) for the Chinese deployment guide.
 
