@@ -888,7 +888,13 @@ function Models({
                       <div>
                         <div>
                           <h3>{model.name || model.id}</h3>
-                          <code>{model.id}</code>
+                          <button
+                            type="button"
+                            class="copy-code"
+                            onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
+                          >
+                            {model.id}
+                          </button>
                         </div>
                       </div>
                       <div class="badges">
@@ -917,13 +923,6 @@ function Models({
                           )}{" "}
                           {t("prompt")}
                         </span>
-                        {model.reasoning_efforts.length > 0 && (
-                          <span>
-                            {t("reasoningEfforts", {
-                              efforts: model.reasoning_efforts.join(", "),
-                            })}
-                          </span>
-                        )}
                         {model.supported_endpoints?.map((endpoint) => (
                           <span>{t("endpointMetadata", { endpoint })}</span>
                         ))}
@@ -958,22 +957,18 @@ function Models({
                         )}
                         {model.preview === true && <span>{t("preview")}</span>}
                       </div>
-                      <div class="copy-chips" aria-label={t("copyOptions")}>
-                        <button
-                          type="button"
-                          onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
-                        >
-                          {t("copyModel")}
-                        </button>
+                      {model.reasoning_efforts.length > 0 && (
+                        <div class="copy-chips" aria-label={t("copyOptions")}>
                         {model.reasoning_efforts.map((effort) => (
                           <button
                             type="button"
                             onClick={() => copyText(`${model.id}-${effort}`, notify, t, "modelReasoningCopied")}
                           >
-                            {t("copyReasoning", { effort })}
+                            -{effort}
                           </button>
                         ))}
-                      </div>
+                        </div>
+                      )}
                     </article>
                   ))}
                 </div>

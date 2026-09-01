@@ -844,6 +844,21 @@ textarea:focus-visible {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.copy-code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.copy-code:hover {
+  color: var(--brand-text);
+  text-decoration: underline;
+}
 .badges {
   display: flex;
   flex-wrap: wrap;
@@ -865,9 +880,7 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+  margin-top: 10px;
 }
 .copy-chips button {
   height: 24px;
