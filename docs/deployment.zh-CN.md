@@ -70,3 +70,9 @@ npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
+
+如果希望开发时直接使用 Cloudflare 远程运行环境和绑定：
+
+```bash
+CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run dev:remote
+```

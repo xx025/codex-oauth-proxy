@@ -45,16 +45,20 @@ interface ModelCatalogCache {
 
 export class AccountPool extends DurableObject<Env> {
   private readonly core: AccountPoolCore;
-  private readonly upstreamFetch: typeof fetch;
+  private upstreamFetch?: typeof fetch;
   private tail: Promise<unknown> = Promise.resolve();
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
-    this.upstreamFetch = createUpstreamFetch(env);
     this.core = new AccountPoolCore({
       get: () => this.ctx.storage.get<PoolState>("pool"),
       put: (value) => this.ctx.storage.put("pool", value),
-    }, this.upstreamFetch, Date.now, env.KEY_ENCRYPTION_SECRET);
+    }, (input, init) => this.fetchUpstream(input, init), Date.now, env.KEY_ENCRYPTION_SECRET);
+  }
+
+  private fetchUpstream(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    this.upstreamFetch ??= createUpstreamFetch(this.env);
+    return this.upstreamFetch(input, init);
   }
 
   fetch(request: Request): Promise<Response> {
@@ -126,7 +130,7 @@ export class AccountPool extends DurableObject<Env> {
       if (url.pathname === "/oauth/device/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
         await this.pruneDeviceLogins();
-        const session = await beginDeviceLogin(this.upstreamFetch, Date.now, name);
+        const session = await beginDeviceLogin((input, init) => this.fetchUpstream(input, init), Date.now, name);
         await this.ctx.storage.put(this.deviceLoginKey(session.id), session);
         return json({ login: publicDeviceLogin(session) }, 201);
       }

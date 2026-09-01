@@ -755,7 +755,11 @@ function Keys({ keys, setKeys, open, notify }: any) {
           </Button>
         }
       />
-      <Panel title={t("clientKeys")} subtitle={t("keysSecurity")}>
+      <Panel
+        title={t("clientKeys")}
+        subtitle={t("keysSecurity")}
+        actions={<Button onClick={copyApiUrl}>{t("copyApiUrl")}</Button>}
+      >
         {keys.length ? (
           <div class="list">
             {keys.map((key: ProxyKey) => (
@@ -781,7 +785,6 @@ function Keys({ keys, setKeys, open, notify }: any) {
                     : t("createdBeforeUpgrade")}
                 </span>
                 <div class="row-actions">
-                  <Button onClick={copyApiUrl}>{t("copyApiUrl")}</Button>
                   {!key.revokedAt && (
                     <Button onClick={() => rename(key)}>
                       {t("rename")}
@@ -881,13 +884,6 @@ function Models({
                           <h3>{model.name || model.id}</h3>
                           <code>{model.id}</code>
                         </div>
-                        <Button
-                          class="icon-button"
-                          aria-label={t("copyModelName", { name: model.id })}
-                          onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
-                        >
-                          {t("copy")}
-                        </Button>
                       </div>
                       <div class="badges">
                         <span>
@@ -955,6 +951,22 @@ function Models({
                           </span>
                         )}
                         {model.preview === true && <span>{t("preview")}</span>}
+                      </div>
+                      <div class="copy-chips" aria-label={t("copyOptions")}>
+                        <button
+                          type="button"
+                          onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
+                        >
+                          {t("copyModel")}
+                        </button>
+                        {model.reasoning_efforts.map((effort) => (
+                          <button
+                            type="button"
+                            onClick={() => copyText(JSON.stringify({ model: model.id, reasoning_effort: effort }), notify, t, "modelReasoningCopied")}
+                          >
+                            {t("copyReasoning", { effort })}
+                          </button>
+                        ))}
                       </div>
                     </article>
                   ))}

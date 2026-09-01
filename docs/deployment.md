@@ -70,3 +70,9 @@ npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
+
+For development against Cloudflare's remote runtime and bindings:
+
+```bash
+CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run dev:remote
+```
