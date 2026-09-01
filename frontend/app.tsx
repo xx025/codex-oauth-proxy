@@ -958,8 +958,13 @@ function Models({
                         )}
                         {model.preview === true && <span>{t("preview")}</span>}
                       </div>
-                      {model.reasoning_efforts.length > 0 && (
-                        <div class="copy-chips" aria-label={t("copyOptions")}>
+                      <div class="copy-chips" aria-label={t("copyOptions")}>
+                        <button
+                          type="button"
+                          onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
+                        >
+                          {model.id}
+                        </button>
                         {model.reasoning_efforts.map((effort) => (
                           <button
                             type="button"
@@ -968,8 +973,7 @@ function Models({
                             {modelVariantId(model, effort)}
                           </button>
                         ))}
-                        </div>
-                      )}
+                      </div>
                     </article>
                   ))}
                 </div>
