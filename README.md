@@ -10,6 +10,13 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 
 > This project uses an unofficial upstream interface. Use only accounts you control and follow the applicable terms.
 
+## Demo
+
+- Test site: <https://cloud-router.vktest.workers.dev/>
+- Password: `admin`
+
+Do not enter private information, personal tokens, production API keys, or accounts you care about on the public demo site.
+
 ## Features
 
 - OpenAI-compatible API endpoints
@@ -23,11 +30,6 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 ## Screenshot
 
 ![Administration UI](docs/image.png)
-
-## Demo
-
-- Test site: <https://cloud-router.vktest.workers.dev/>
-- Password: `admin`
 
 ## Deploy
 

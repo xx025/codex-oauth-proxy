@@ -10,6 +10,13 @@
 
 > 本项目使用非官方上游接口。请只使用自己有权控制的账号，并遵守相关条款。
 
+## 测试站点
+
+- 地址：<https://cloud-router.vktest.workers.dev/>
+- 密码：`admin`
+
+请不要在公开测试站点输入私人信息、个人 Token、生产 API Key 或重要账号。
+
 ## 功能
 
 - OpenAI 兼容 API
@@ -23,11 +30,6 @@
 ## 截图
 
 ![管理面板](docs/image.png)
-
-## 测试站点
-
-- 地址：<https://cloud-router.vktest.workers.dev/>
-- 密码：`admin`
 
 ## 部署
 
