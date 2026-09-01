@@ -451,7 +451,7 @@ describe("AccountPoolCore", () => {
 
     expect(selected.id).toBe(imported.id);
     expect(selected.usage?.primary?.remainingPercent).toBe(90);
-    expect(oauthFetch).toHaveBeenCalledTimes(2);
+    expect(oauthFetch).toHaveBeenCalledTimes(3);
   });
 
   it("does not repeatedly auto-reset after an exhausted reset attempt", async () => {

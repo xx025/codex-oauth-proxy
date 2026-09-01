@@ -83,7 +83,8 @@ describe("AccountPool device routes", () => {
             reset_at: 4_000,
           },
         },
-      }));
+      }))
+      .mockResolvedValueOnce(Response.json({ available_count: 2 }));
     const object = new AccountPool(state, {
       KEY_ENCRYPTION_SECRET: "internal",
       NATIVE_EGRESS: { fetch: upstream },
@@ -116,6 +117,9 @@ describe("AccountPool device routes", () => {
     });
     expect((upstream.mock.calls[0][0] as Request).url).toBe(
       "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+    );
+    expect((upstream.mock.calls[2][0] as Request).url).toBe(
+      "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
     );
   });
 
