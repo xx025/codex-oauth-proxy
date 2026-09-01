@@ -1,0 +1,5 @@
+# Required. Generate with: openssl rand -hex 32
+KEY_ENCRYPTION_SECRET=
+
+# Optional when the administration hostname is protected by Cloudflare Access.
+ADMIN_API_KEY=

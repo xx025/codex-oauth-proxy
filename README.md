@@ -2,6 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
+
 An OpenAI-compatible, multi-account OAuth gateway implemented entirely in TypeScript. The API, administration UI, OAuth flows, account routing, and streaming conversion run on Cloudflare Workers; durable state and CPU-intensive proxy execution use Durable Objects.
 
 This repository contains no local application service, container, native binary, or WebAssembly runtime. Because the upstream rejects ordinary Worker egress IPs, every upstream request must use the `NATIVE_EGRESS` Cloudflare VPC binding. Requests fail closed if that binding is unavailable.
@@ -56,13 +58,13 @@ Long-running requests remain on this same streaming path; they are not converted
 - An online Cloudflare Tunnel/VPC egress
 - An egress public IP accepted by the ChatGPT upstream
 
-Confirm that the Tunnel ID in `wrangler.jsonc` belongs to the intended egress:
+Set your Cloudflare Tunnel/VPC egress ID with `CLOUDFLARE_TUNNEL_ID`, or replace the placeholder Tunnel ID in `wrangler.jsonc`:
 
 ```jsonc
 "vpc_networks": [
   {
     "binding": "NATIVE_EGRESS",
-    "tunnel_id": "63f25b3f-89c9-428b-9516-afd65c748b37",
+    "tunnel_id": "YOUR_TUNNEL_ID",
     "remote": true
   }
 ]
@@ -70,12 +72,16 @@ Confirm that the Tunnel ID in `wrangler.jsonc` belongs to the intended egress:
 
 ## Deploy
 
+For detailed Cloudflare deployment notes, renaming guidance, and one-command deployment requirements, see [Cloudflare Deployment](docs/deployment.zh-CN.md) (Chinese).
+
+You can also use the Deploy to Cloudflare button above. During the guided setup, keep the `NATIVE_EGRESS` binding name unchanged, select your own Tunnel/VPC egress, and provide `KEY_ENCRYPTION_SECRET`.
+
 ```bash
 npm ci
 npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 npm run check
-npm run deploy
+CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
 
 Use a long random value for `KEY_ENCRYPTION_SECRET`; it encrypts recoverable client keys and signs administrator sessions.

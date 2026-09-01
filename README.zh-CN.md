@@ -2,6 +2,8 @@
 
 [English](README.md) | 简体中文
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
+
 兼容 OpenAI API 的多账号 OAuth 网关。应用由 TypeScript 单语言实现，API、管理面板、OAuth、账号调度与流式转换全部部署在 Cloudflare Workers；持久状态和高 CPU 代理执行由 Durable Object 承担。
 
 本仓库不包含本地应用服务、容器、原生二进制或 WebAssembly。由于上游拒绝普通 Worker 出口 IP，上游请求必须通过 `NATIVE_EGRESS` Cloudflare VPC 绑定转发，绑定缺失时会直接失败，不会回退到普通出口。
@@ -52,13 +54,13 @@ API 客户端 / 管理员
 - 已创建且在线的 Cloudflare Tunnel/VPC 出口
 - 该出口的公网 IP 可以访问 ChatGPT 上游
 
-确认 `wrangler.jsonc` 中的 Tunnel ID 属于目标出口：
+通过 `CLOUDFLARE_TUNNEL_ID` 设置你的 Cloudflare Tunnel/VPC 出口 ID，或替换 `wrangler.jsonc` 中的占位 Tunnel ID：
 
 ```jsonc
 "vpc_networks": [
   {
     "binding": "NATIVE_EGRESS",
-    "tunnel_id": "63f25b3f-89c9-428b-9516-afd65c748b37",
+    "tunnel_id": "YOUR_TUNNEL_ID",
     "remote": true
   }
 ]
@@ -66,12 +68,16 @@ API 客户端 / 管理员
 
 ## 部署
 
+更完整的 Cloudflare 部署、项目改名和一键部署说明见 [Cloudflare 部署文档](docs/deployment.zh-CN.md)。
+
+也可以使用上方的 Deploy to Cloudflare 按钮。按引导部署时，保持 `NATIVE_EGRESS` 绑定名不变，选择你自己的 Tunnel/VPC 出口，并填写 `KEY_ENCRYPTION_SECRET`。
+
 ```bash
 npm ci
 npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
 npm run check
-npm run deploy
+CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
 
 `KEY_ENCRYPTION_SECRET` 必须是足够长的随机值，用于加密可恢复的客户端密钥并签名管理员会话。

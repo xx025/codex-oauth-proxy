@@ -2,13 +2,26 @@
   "name": "codex-oauth-proxy",
   "private": true,
   "type": "module",
+  "cloudflare": {
+    "bindings": {
+      "KEY_ENCRYPTION_SECRET": {
+        "description": "Required secret. Generate a long random value, for example `openssl rand -hex 32`. It encrypts recoverable client keys and signs administrator sessions."
+      },
+      "ADMIN_API_KEY": {
+        "description": "Optional if the administration hostname is protected by Cloudflare Access. Otherwise set a long random admin login key."
+      },
+      "NATIVE_EGRESS": {
+        "description": "Required Cloudflare VPC Network binding. Keep the binding name as `NATIVE_EGRESS` and select your own online Tunnel/VPC egress whose public IP can reach `chatgpt.com` and `auth.openai.com`."
+      }
+    }
+  },
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "frontend:build": "node scripts/build-frontend.mjs",
-    "build": "npm run frontend:build && wrangler deploy --dry-run",
-    "deploy": "npm run frontend:build && wrangler deploy",
+    "build": "npm run frontend:build && node scripts/wrangler-with-vpc.mjs deploy --dry-run",
+    "deploy": "npm run frontend:build && node scripts/wrangler-with-vpc.mjs deploy",
     "dev": "npm run frontend:build && wrangler dev",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p frontend/tsconfig.json",
