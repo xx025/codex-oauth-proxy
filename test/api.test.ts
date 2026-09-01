@@ -280,9 +280,9 @@ describe("Cloudflare-native API proxy", () => {
           slug: "gpt-5.4",
           display_name: "GPT-5.4",
           visibility: "list",
-          capabilities: { context_length: 128_000 },
-          limits: { output_token_limit: 16_000 },
-          usage_limits: { input_token_limit: 112_000 },
+          capabilities: { limits: { contextWindow: 128_000 } },
+          metadata: { output: { maxOutputTokens: 16_000 } },
+          usage_limits: { prompt: { inputTokenLimit: 112_000 } },
         },
       ],
     }) as { data: unknown[] };

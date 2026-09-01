@@ -843,32 +843,53 @@ function modelMetadata(model: JsonObject): JsonObject {
     model,
   ];
   const limits: JsonObject = {};
-  addNumber(limits, "max_context_window_tokens", sourceLimits, model, [
+  addTokenLimit(limits, "max_context_window_tokens", sourceLimits, [
     "max_context_window_tokens",
+    "maxContextWindowTokens",
     "context_window_tokens",
+    "contextWindowTokens",
     "context_window",
+    "contextWindow",
     "context_length",
+    "contextLength",
     "max_context_length",
+    "maxContextLength",
     "max_context_tokens",
+    "maxContextTokens",
     "max_tokens",
+    "maxTokens",
   ]);
-  addNumber(limits, "max_output_tokens", sourceLimits, model, [
+  addTokenLimit(limits, "max_output_tokens", sourceLimits, [
     "max_output_tokens",
+    "maxOutputTokens",
     "max_completion_tokens",
+    "maxCompletionTokens",
     "output_token_limit",
+    "outputTokenLimit",
     "output_tokens",
+    "outputTokens",
     "max_output",
+    "maxOutput",
     "max_output_length",
+    "maxOutputLength",
     "max_response_tokens",
+    "maxResponseTokens",
   ]);
-  addNumber(limits, "max_prompt_tokens", sourceLimits, model, [
+  addTokenLimit(limits, "max_prompt_tokens", sourceLimits, [
     "max_prompt_tokens",
+    "maxPromptTokens",
     "max_input_tokens",
+    "maxInputTokens",
     "prompt_token_limit",
+    "promptTokenLimit",
     "input_token_limit",
+    "inputTokenLimit",
     "input_tokens",
+    "inputTokens",
     "max_input",
+    "maxInput",
     "max_input_length",
+    "maxInputLength",
   ]);
 
   const supports: JsonObject = {};
@@ -931,6 +952,42 @@ function addNumber(
       }
     }
   }
+}
+
+function addTokenLimit(
+  target: JsonObject,
+  key: string,
+  sources: Array<JsonObject | undefined>,
+  aliases: string[],
+): void {
+  const seen = new Set<unknown>();
+  for (const source of sources) {
+    const value = firstNestedNumber(source, aliases, seen);
+    if (value !== undefined && value >= 0) {
+      target[key] = value;
+      return;
+    }
+  }
+}
+
+function firstNestedNumber(
+  source: unknown,
+  aliases: string[],
+  seen: Set<unknown>,
+): number | undefined {
+  const object = objectValue(source);
+  if (!object || seen.has(object)) return undefined;
+  seen.add(object);
+  for (const alias of aliases) {
+    const value = numberValue(object[alias]);
+    if (value !== undefined) return value;
+  }
+  for (const value of Object.values(object)) {
+    if (Array.isArray(value)) continue;
+    const nested = firstNestedNumber(value, aliases, seen);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
 }
 
 function addString(
