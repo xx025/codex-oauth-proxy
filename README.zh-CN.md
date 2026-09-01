@@ -1,8 +1,8 @@
-# CloudRouter
+# ECRelay
 
 [English](README.md) | 简体中文
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
 把 ChatGPT OAuth 账号路由为运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
 
@@ -12,7 +12,7 @@
 
 ## 测试站点
 
-- 地址：<https://cloud-router.vktest.workers.dev/>
+- 地址：<https://ecrelay.vktest.workers.dev/>
 - 密码：`admin`
 
 请不要在公开测试站点输入私人信息、个人 Token、生产 API Key 或重要账号。

@@ -1,8 +1,8 @@
-# CloudRouter
+# ECRelay
 
 English | [简体中文](README.zh-CN.md)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
 Route ChatGPT OAuth accounts through an OpenAI-compatible API on Cloudflare Workers.
 
@@ -12,7 +12,7 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 
 ## Demo
 
-- Test site: <https://cloud-router.vktest.workers.dev/>
+- Test site: <https://ecrelay.vktest.workers.dev/>
 - Password: `admin`
 
 Do not enter private information, personal tokens, production API keys, or accounts you care about on the public demo site.

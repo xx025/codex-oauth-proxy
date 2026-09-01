@@ -4,7 +4,7 @@ English | [简体中文](deployment.zh-CN.md)
 
 Browser deployment is recommended. You do not need to download the repository or run npm locally.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Durable Objects are created automatically during a successful Wrangler deploymen
 
 ## VPC Egress Connector Reference
 
-CloudRouter requires Cloudflare VPC egress through `NATIVE_EGRESS`. If you need a minimal tunnel connector, use [cloudflared](https://github.com/xx025/cloudflared) as a reference implementation. It focuses on `cloudflared` only and includes a Railway quick deploy shortcut.
+ECRelay requires Cloudflare VPC egress through `NATIVE_EGRESS`. If you need a minimal tunnel connector, use [cloudflared](https://github.com/xx025/cloudflared) as a reference implementation. It focuses on `cloudflared` only and includes a Railway quick deploy shortcut.
 
 Cloudflare's official `cloudflared` service documentation: [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/).
 

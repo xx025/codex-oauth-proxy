@@ -5,7 +5,7 @@ export type Locale = "zh-CN" | "en";
 export type LanguagePreference = "system" | Locale;
 
 const en = {
-  documentTitle: "Codex Pool administration",
+  documentTitle: "ECRelay administration",
   language: "Language",
   languageSystem: "Browser language",
   languageChinese: "Chinese",
@@ -316,7 +316,7 @@ const en = {
 export type TranslationKey = keyof typeof en;
 
 const zh: Record<TranslationKey, string> = {
-  documentTitle: "Codex Pool 管理后台",
+  documentTitle: "ECRelay 管理后台",
   language: "语言",
   languageSystem: "跟随浏览器",
   languageChinese: "中文",
