@@ -116,7 +116,7 @@ export function AppShell({
         <a class="brand" href="#home">
           <Logo />
           <span class="brand-copy">
-            <strong>Codex Pool</strong>
+            <strong>CloudRouter</strong>
             <small>OAuth gateway</small>
           </span>
         </a>
@@ -165,7 +165,7 @@ export function AppShell({
         <header class="mobile-bar">
           <a class="brand" href="#home">
             <Logo />
-            <span>Codex Pool</span>
+            <span>CloudRouter</span>
           </a>
           <div class="mobile-controls">
             <select

@@ -1,10 +1,10 @@
-# ChatGPT OAuth API Proxy
+# CloudRouter
 
 English | [简体中文](README.zh-CN.md)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
 
-Turn ChatGPT OAuth accounts into an OpenAI-compatible API on Cloudflare Workers.
+Route ChatGPT OAuth accounts through an OpenAI-compatible API on Cloudflare Workers.
 
 Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mcp` while managing upstream access with ChatGPT OAuth accounts.
 

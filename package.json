@@ -1,5 +1,5 @@
 {
-  "name": "codex-oauth-proxy",
+  "name": "cloud-router",
   "private": true,
   "type": "module",
   "cloudflare": {

@@ -1,10 +1,10 @@
-# ChatGPT OAuth API 代理
+# CloudRouter
 
 [English](README.md) | 简体中文
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
 
-把 ChatGPT OAuth 账号转换成运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
+把 ChatGPT OAuth 账号路由为运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
 
 可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，上游访问由 ChatGPT OAuth 账号统一管理。
 

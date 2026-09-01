@@ -4,7 +4,7 @@ English | [简体中文](deployment.zh-CN.md)
 
 Browser deployment is recommended. You do not need to download the repository or run npm locally.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/cloud-router)
 
 ## Requirements
 
