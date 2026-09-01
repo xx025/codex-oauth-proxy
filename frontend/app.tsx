@@ -741,8 +741,9 @@ function Keys({ keys, setKeys, open, notify }: any) {
       notify(t("keyRenameFailed"), message(error, t("requestFailed")), true);
     }
   };
+  const apiUrl = `${location.origin}/v1`;
   const copyApiUrl = () =>
-    copyText(`${location.origin}/v1`, notify, t, "apiUrlCopied");
+    copyText(apiUrl, notify, t, "apiUrlCopied");
   return (
     <>
       <PageHeader
@@ -758,8 +759,12 @@ function Keys({ keys, setKeys, open, notify }: any) {
       <Panel
         title={t("clientKeys")}
         subtitle={t("keysSecurity")}
-        actions={<Button onClick={copyApiUrl}>{t("copyApiUrl")}</Button>}
       >
+        <div class="copy-field">
+          <label for="api-base-url">{t("apiBaseUrl")}</label>
+          <input id="api-base-url" value={apiUrl} readOnly />
+          <Button onClick={copyApiUrl}>{t("copy")}</Button>
+        </div>
         {keys.length ? (
           <div class="list">
             {keys.map((key: ProxyKey) => (
@@ -962,7 +967,7 @@ function Models({
                         {model.reasoning_efforts.map((effort) => (
                           <button
                             type="button"
-                            onClick={() => copyText(JSON.stringify({ model: model.id, reasoning_effort: effort }), notify, t, "modelReasoningCopied")}
+                            onClick={() => copyText(`${model.id}-${effort}`, notify, t, "modelReasoningCopied")}
                           >
                             {t("copyReasoning", { effort })}
                           </button>

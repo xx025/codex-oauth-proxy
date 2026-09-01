@@ -752,6 +752,26 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 12px;
 }
+.copy-field {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+.copy-field label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.copy-field input {
+  width: 100%;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
 .key-row h3 .status {
   margin-left: 5px;
   vertical-align: 1px;
@@ -1301,6 +1321,12 @@ tbody tr:last-child td {
   .key-row {
     grid-template-columns: 1fr auto;
   }
+  .copy-field {
+    grid-template-columns: 1fr auto;
+  }
+  .copy-field label {
+    grid-column: 1 / -1;
+  }
   .key-row > span {
     display: none;
   }
@@ -1384,6 +1410,9 @@ tbody tr:last-child td {
   }
   .key-row {
     padding: 15px 16px;
+  }
+  .copy-field {
+    padding: 12px;
   }
   .model-grid {
     grid-template-columns: 1fr;
