@@ -123,20 +123,20 @@ describe("Cloudflare-native API proxy", () => {
     });
   });
 
-  it("strips service tier until the Codex upstream accepts fast mode", () => {
+  it("maps global fast service tier to Codex priority requests", () => {
     const responses = prepareProxyRequest(
       "/v1/responses",
       body({ model: "gpt-5.5", input: "Hello", service_tier: "standard" }),
       { serviceTier: "fast" },
     );
-    expect(JSON.parse(new TextDecoder().decode(responses.body)).service_tier).toBeUndefined();
+    expect(JSON.parse(new TextDecoder().decode(responses.body)).service_tier).toBe("priority");
 
     const chat = prepareProxyRequest(
       "/v1/chat/completions",
       body({ model: "gpt-5.5", messages: [{ role: "user", content: "Hi" }] }),
       { serviceTier: "fast" },
     );
-    expect(JSON.parse(new TextDecoder().decode(chat.body)).service_tier).toBeUndefined();
+    expect(JSON.parse(new TextDecoder().decode(chat.body)).service_tier).toBe("priority");
   });
 
   it("omits service tier by default", () => {
@@ -280,9 +280,9 @@ describe("Cloudflare-native API proxy", () => {
           slug: "gpt-5.4",
           display_name: "GPT-5.4",
           visibility: "list",
-          capabilities: { limits: { contextWindow: 128_000 } },
+          context_window: 128_000,
+          service_tiers: [{ id: "priority", name: "Fast" }],
           metadata: { output: { maxOutputTokens: 16_000 } },
-          usage_limits: { prompt: { inputTokenLimit: 112_000 } },
         },
       ],
     }) as { data: unknown[] };
@@ -292,9 +292,11 @@ describe("Cloudflare-native API proxy", () => {
         limits: {
           max_context_window_tokens: 128_000,
           max_output_tokens: 16_000,
-          max_prompt_tokens: 112_000,
+          max_prompt_tokens: 128_000,
         },
+        supports: { fast_mode: true },
       },
+      service_tiers: ["priority"],
     });
   });
 

@@ -11,6 +11,7 @@ export type ModelMetadata = {
   category?: string;
   preview?: boolean;
   supported_endpoints?: string[];
+  service_tiers?: string[];
   capabilities?: {
     limits?: {
       max_context_window_tokens?: number;

@@ -477,7 +477,7 @@ function normalizeResponsesInput(body: JsonObject): void {
 
 function applyServiceTier(body: JsonObject, serviceTier: ProxyRequestOptions["serviceTier"]): void {
   delete body.service_tier;
-  void serviceTier;
+  if (serviceTier === "fast") body.service_tier = "priority";
 }
 
 function normalizeModel(input: string): string {
@@ -846,6 +846,8 @@ function modelMetadata(model: JsonObject): JsonObject {
   addTokenLimit(limits, "max_context_window_tokens", sourceLimits, [
     "max_context_window_tokens",
     "maxContextWindowTokens",
+    "max_context_window",
+    "maxContextWindow",
     "context_window_tokens",
     "contextWindowTokens",
     "context_window",
@@ -891,6 +893,12 @@ function modelMetadata(model: JsonObject): JsonObject {
     "max_input_length",
     "maxInputLength",
   ]);
+  if (
+    limits.max_prompt_tokens === undefined &&
+    typeof limits.max_context_window_tokens === "number"
+  ) {
+    limits.max_prompt_tokens = limits.max_context_window_tokens;
+  }
 
   const supports: JsonObject = {};
   const sourceSupports = objectValue(sourceCapabilities?.supports);
@@ -899,6 +907,7 @@ function modelMetadata(model: JsonObject): JsonObject {
     ["tools", ["tools", "tool_calls", "function_calling", "supports_tools"]],
     ["vision", ["vision", "image_input", "supports_vision"]],
     ["streaming", ["streaming", "supports_streaming"]],
+    ["fast_mode", ["fast_mode", "supports_fast_mode"]],
     [
       "parallel_tool_calls",
       ["parallel_tool_calls", "supports_parallel_tool_calls"],
@@ -915,6 +924,8 @@ function modelMetadata(model: JsonObject): JsonObject {
     );
     if (value !== undefined) supports[name] = value;
   }
+  const serviceTiers = serviceTierIds(model);
+  if (serviceTiers.includes("priority")) supports.fast_mode = true;
 
   const capabilities: JsonObject = {};
   if (Object.keys(limits).length) capabilities.limits = limits;
@@ -933,6 +944,9 @@ function modelMetadata(model: JsonObject): JsonObject {
     "supported_api_endpoints",
   ]);
   if (endpoints?.length) metadata.supported_endpoints = [...new Set(endpoints)];
+  if (serviceTiers.length) {
+    metadata.service_tiers = serviceTiers;
+  }
   return metadata;
 }
 
@@ -1029,6 +1043,14 @@ function firstStringArray(
         .filter(Boolean);
   }
   return undefined;
+}
+
+function serviceTierIds(model: JsonObject): string[] {
+  const tiers = Array.isArray(model.service_tiers) ? model.service_tiers : [];
+  const ids = tiers
+    .map((tier) => stringValue(objectValue(tier)?.id).trim())
+    .filter(Boolean);
+  return [...new Set(ids)];
 }
 
 async function readJsonResponse(
