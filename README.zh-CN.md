@@ -34,7 +34,9 @@
 - Worker Secret `KEY_ENCRYPTION_SECRET`：随机长字符串，可用 `openssl rand -hex 32` 生成
 - 可选 Worker Secret `ADMIN_API_KEY`：仅在管理域名没有使用 Cloudflare Access 时需要
 
-Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输入框。先创建项目，然后进入 **Settings > Build > Build variables and secrets** 添加 `CLOUDFLARE_TUNNEL_ID`，再重新部署。
+Durable Objects 会在 Wrangler 成功部署时自动创建，不需要手动创建。
+
+Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输入框。首次部署可以先创建不带 VPC 出口的 Worker；之后进入 **Settings > Build > Build variables and secrets** 添加 `CLOUDFLARE_TUNNEL_ID`，再重新部署后使用 API。
 
 中文部署说明见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
 

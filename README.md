@@ -34,9 +34,11 @@ Before retrying the first deployment, add these in the Cloudflare dashboard:
 - Worker secret `KEY_ENCRYPTION_SECRET`: a random value, for example `openssl rand -hex 32`
 - Optional Worker secret `ADMIN_API_KEY`: required only if the admin domain is not protected by Cloudflare Access
 
-Cloudflare's Deploy button does not currently show a Tunnel ID input during the initial setup. Create the project first, add `CLOUDFLARE_TUNNEL_ID` under **Settings > Build > Build variables and secrets**, then retry the deployment.
+Durable Objects are created automatically during a successful Wrangler deployment. You do not need to create them manually.
 
-See [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md) for the Chinese deployment guide.
+Cloudflare's Deploy button does not currently show a Tunnel ID input during the initial setup. The first deployment can create the Worker without VPC egress; add `CLOUDFLARE_TUNNEL_ID` under **Settings > Build > Build variables and secrets**, then retry the deployment before using the API.
+
+See [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 
 ## Use
 
