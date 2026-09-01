@@ -835,25 +835,40 @@ function modelEntry(
 
 function modelMetadata(model: JsonObject): JsonObject {
   const sourceCapabilities = objectValue(model.capabilities);
-  const sourceLimits =
-    objectValue(sourceCapabilities?.limits) ??
-    sourceCapabilities ??
-    objectValue(model.limits);
+  const sourceLimits = [
+    objectValue(sourceCapabilities?.limits),
+    sourceCapabilities,
+    objectValue(model.limits),
+    objectValue(model.usage_limits),
+    model,
+  ];
   const limits: JsonObject = {};
   addNumber(limits, "max_context_window_tokens", sourceLimits, model, [
     "max_context_window_tokens",
     "context_window_tokens",
     "context_window",
+    "context_length",
+    "max_context_length",
+    "max_context_tokens",
+    "max_tokens",
   ]);
   addNumber(limits, "max_output_tokens", sourceLimits, model, [
     "max_output_tokens",
     "max_completion_tokens",
     "output_token_limit",
+    "output_tokens",
+    "max_output",
+    "max_output_length",
+    "max_response_tokens",
   ]);
   addNumber(limits, "max_prompt_tokens", sourceLimits, model, [
     "max_prompt_tokens",
     "max_input_tokens",
     "prompt_token_limit",
+    "input_token_limit",
+    "input_tokens",
+    "max_input",
+    "max_input_length",
   ]);
 
   const supports: JsonObject = {};
@@ -903,11 +918,11 @@ function modelMetadata(model: JsonObject): JsonObject {
 function addNumber(
   target: JsonObject,
   key: string,
-  nested: JsonObject | undefined,
+  sources: Array<JsonObject | undefined>,
   direct: JsonObject,
   aliases: string[],
 ): void {
-  for (const source of [nested, direct]) {
+  for (const source of [...sources, direct]) {
     for (const alias of aliases) {
       const value = numberValue(source?.[alias]);
       if (value !== undefined && value >= 0) {

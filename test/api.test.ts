@@ -273,6 +273,31 @@ describe("Cloudflare-native API proxy", () => {
     });
   });
 
+  it("extracts token limits from mixed upstream metadata locations", () => {
+    const result = modelsFromUpstream({
+      models: [
+        {
+          slug: "gpt-5.4",
+          display_name: "GPT-5.4",
+          visibility: "list",
+          capabilities: { context_length: 128_000 },
+          limits: { output_token_limit: 16_000 },
+          usage_limits: { input_token_limit: 112_000 },
+        },
+      ],
+    }) as { data: unknown[] };
+    expect(result.data[0]).toMatchObject({
+      id: "gpt-5.4",
+      capabilities: {
+        limits: {
+          max_context_window_tokens: 128_000,
+          max_output_tokens: 16_000,
+          max_prompt_tokens: 112_000,
+        },
+      },
+    });
+  });
+
   it("keeps unknown listed models minimal and never copies unapproved metadata", () => {
     const result = modelsFromUpstream({
       models: [
