@@ -24,6 +24,24 @@ const credential = (
   principalId,
 });
 
+const usageSnapshot = (remainingPercent: number) => ({
+  primary: {
+    usedPercent: 100 - remainingPercent,
+    remainingPercent,
+    windowSeconds: 18_000,
+    windowMinutes: 300,
+    resetsAt: 10_000,
+  },
+  secondary: {
+    usedPercent: 100 - remainingPercent,
+    remainingPercent,
+    windowSeconds: 604_800,
+    windowMinutes: 10_080,
+    resetsAt: 20_000,
+  },
+  capturedAt: 1_000,
+});
+
 function jwt(payload: Record<string, unknown>): string {
   const encode = (value: unknown) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -183,6 +201,42 @@ describe("AccountPoolCore", () => {
     expect((await pool.select()).accountId).toBe("b");
     await pool.update(first.id, { enabled: false });
     expect((await pool.select()).accountId).toBe("b");
+  });
+
+  it("prefers accounts with more remaining quota when configured", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(storage, vi.fn(), () => 1_000);
+    await pool.importAccount(credential("low", "Low"));
+    await pool.importAccount(credential("high", "High"));
+    await pool.updateSettings({ selectionStrategy: "quota_weighted" });
+    storage.value!.accounts[0].usage = usageSnapshot(15);
+    storage.value!.accounts[1].usage = usageSnapshot(80);
+
+    expect((await pool.select()).accountId).toBe("high");
+  });
+
+  it("refreshes stale quota snapshots before quota-weighted selection", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const accountId = new Headers(init?.headers).get("chatgpt-account-id");
+      if (String(input).includes("rate-limit-reset-credits")) return Response.json({ available_count: 0 });
+      const used = accountId === "high" ? 20 : 90;
+      return Response.json({
+        rate_limit: {
+          primary_window: { used_percent: used, limit_window_seconds: 18_000, reset_at: 10_000 },
+          secondary_window: { used_percent: used, limit_window_seconds: 604_800, reset_at: 20_000 },
+        },
+      });
+    });
+    const pool = new AccountPoolCore(storage, oauthFetch as typeof fetch, () => 3_600_000);
+    await pool.importAccount(credential("low", "Low"));
+    await pool.importAccount(credential("high", "High"));
+    await pool.updateSettings({ selectionStrategy: "quota_weighted" });
+    storage.value!.accounts[0].usage = { ...usageSnapshot(80), capturedAt: 1_000 };
+    storage.value!.accounts[1].usage = { ...usageSnapshot(10), capturedAt: 1_000 };
+
+    expect((await pool.select()).accountId).toBe("high");
+    expect(oauthFetch).toHaveBeenCalledTimes(4);
   });
 
   it("keeps different users in the same Team workspace as separate accounts", async () => {

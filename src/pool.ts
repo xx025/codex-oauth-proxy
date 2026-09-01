@@ -76,7 +76,7 @@ export interface PoolState {
   proxyKeys?: ProxyKeyRecord[];
 }
 
-export type SelectionStrategy = "round_robin" | "least_failures";
+export type SelectionStrategy = "round_robin" | "least_failures" | "quota_weighted";
 
 export interface PoolSettings {
   selectionStrategy: SelectionStrategy;
@@ -143,6 +143,7 @@ export interface RequestStatsSnapshot {
 
 const REQUEST_RECORD_LIMIT = 200;
 const RESET_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
+const QUOTA_WEIGHT_TTL_MS = 30 * 60 * 1000;
 
 export interface ProxyKeyRecord {
   id: string;
@@ -464,11 +465,20 @@ export class AccountPoolCore {
       { length: state.accounts.length },
       (_, offset) => (state.cursor + offset) % state.accounts.length,
     );
+    if (settings.selectionStrategy === "quota_weighted") {
+      await this.refreshQuotaWeights(state, candidateIndexes, excludedSet, settings, now);
+    }
     if (settings.selectionStrategy === "least_failures") {
       candidateIndexes.sort(
         (left, right) =>
           state.accounts[left].failureCount -
           state.accounts[right].failureCount,
+      );
+    } else if (settings.selectionStrategy === "quota_weighted") {
+      candidateIndexes.sort(
+        (left, right) =>
+          quotaScore(state.accounts[right]) - quotaScore(state.accounts[left]) ||
+          state.accounts[left].failureCount - state.accounts[right].failureCount,
       );
     }
 
@@ -773,6 +783,36 @@ export class AccountPoolCore {
     account.usage = usage;
   }
 
+  private async refreshQuotaWeights(
+    state: PoolState,
+    candidateIndexes: number[],
+    excludedSet: Set<string>,
+    settings: PoolSettings,
+    now: number,
+  ): Promise<void> {
+    await Promise.all(
+      candidateIndexes.map(async (index) => {
+        const account = state.accounts[index];
+        if (
+          !account.enabled ||
+          account.cooldownUntil > now ||
+          excludedSet.has(account.id) ||
+          !quotaWeightStale(account.usage, now)
+        ) return;
+        try {
+          await this.refreshUsageForAccount(account, settings);
+        } catch (error) {
+          account.usage = {
+            ...account.usage,
+            capturedAt: now,
+            error: safeUsageError(error),
+          };
+        }
+        account.updatedAt = now;
+      }),
+    );
+  }
+
   private fetchUsage(account: AccountRecord): Promise<Response> {
     return this.oauthFetch(USAGE_URL, {
       headers: {
@@ -958,8 +998,22 @@ function settingsFor(state: PoolState): PoolSettings {
 }
 
 function parseSelectionStrategy(value: unknown): SelectionStrategy {
-  if (value === "round_robin" || value === "least_failures") return value;
+  if (value === "round_robin" || value === "least_failures" || value === "quota_weighted") return value;
   throw new PoolError(400, "Invalid account selection strategy");
+}
+
+function quotaScore(account: AccountRecord): number {
+  const windows = [account.usage?.primary, account.usage?.secondary].filter(
+    (window): window is UsageWindow => Boolean(window),
+  );
+  if (!windows.length || account.usage?.error) return -1;
+  return Math.min(
+    ...windows.map((window) => Math.max(0, Math.min(100, Number(window.remainingPercent) || 0))),
+  );
+}
+
+function quotaWeightStale(usage: AccountUsage | undefined, now: number): boolean {
+  return !usage || !usage.capturedAt || now - usage.capturedAt > QUOTA_WEIGHT_TTL_MS;
 }
 
 function boundedInteger(

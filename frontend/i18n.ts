@@ -53,6 +53,7 @@ const en = {
   usageDescriptionShort: "Inspect token consumption, status, and recent calls.",
   strategyHealthy: "Prefer healthy accounts",
   strategyRoundRobin: "Round robin",
+  strategyQuotaWeighted: "Prefer more quota",
   settingsDescriptionShort:
     "Configure failover, refresh, and cooldown policies.",
   openSection: "Open {section}",
@@ -219,8 +220,7 @@ const en = {
   languagePreferenceHelp:
     "Use the browser language or choose a language for this browser.",
   selectionStrategy: "Account selection strategy",
-  selectionStrategyHelp:
-    "Round robin emphasizes balance; prefer healthy accounts selects accounts with fewer failures.",
+  selectionStrategyHelp: "Choose how accounts are picked for new requests.",
   autoResetExhausted: "Auto-reset exhausted accounts",
   autoResetExhaustedHelp:
     "When a stored quota snapshot is exhausted, consume a reset credit before routing if one is available.",
@@ -333,6 +333,7 @@ const zh: Record<TranslationKey, string> = {
   usageDescriptionShort: "查看 Token 消耗、状态与最近调用。",
   strategyHealthy: "优先健康账户",
   strategyRoundRobin: "顺序轮询",
+  strategyQuotaWeighted: "优先剩余额度",
   settingsDescriptionShort: "配置故障转移、刷新与冷却策略。",
   openSection: "打开{section}",
   accountEyebrow: "账户路由",
@@ -488,8 +489,7 @@ const zh: Record<TranslationKey, string> = {
   themePreferenceHelp: "跟随系统配色，或为当前浏览器选择主题。",
   languagePreferenceHelp: "跟随浏览器语言，或为当前浏览器选择语言。",
   selectionStrategy: "账户选择策略",
-  selectionStrategyHelp:
-    "顺序轮询强调均衡；优先健康账户选择失败次数更少的账户。",
+  selectionStrategyHelp: "选择新请求如何挑选账户。",
   autoResetExhausted: "自动重置耗尽账户",
   autoResetExhaustedHelp:
     "当已保存的额度快照显示耗尽时，路由前尝试消耗可用重置次数。",

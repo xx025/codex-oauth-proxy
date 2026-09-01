@@ -407,9 +407,7 @@ function Home({ accounts, keys, models, stats, settings }: any) {
     [
       "settings",
       "navSettings",
-      settings?.selectionStrategy === "least_failures"
-        ? t("strategyHealthy")
-        : t("strategyRoundRobin"),
+      strategyLabel(settings?.selectionStrategy, t),
       "settingsDescriptionShort",
     ],
   ];
@@ -1311,6 +1309,7 @@ function SettingsPage({
             >
               <option value="round_robin">{t("strategyRoundRobin")}</option>
               <option value="least_failures">{t("strategyHealthy")}</option>
+              <option value="quota_weighted">{t("strategyQuotaWeighted")}</option>
             </select>
           </label>
           <label>
@@ -1660,6 +1659,14 @@ const resetStatusKey = (status: string | undefined): TranslationKey => {
     default:
       return "resetStatusfailed";
   }
+};
+const strategyLabel = (
+  strategy: string | undefined,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string,
+) => {
+  if (strategy === "least_failures") return t("strategyHealthy");
+  if (strategy === "quota_weighted") return t("strategyQuotaWeighted");
+  return t("strategyRoundRobin");
 };
 const tokenLimit = (
   locale: "zh-CN" | "en",
