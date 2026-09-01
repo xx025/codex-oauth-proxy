@@ -78,6 +78,7 @@ const en = {
   quotaWindow: "{duration} window",
   quotaCaptured: "Captured {date}",
   creditsBalance: "Credits {balance}",
+  resetCredits: "Reset credits {count}",
   revealAccountIdentity: "Reveal identity for {name}",
   hideAccountIdentity: "Hide identity for {name}",
   disabled: "Disabled",
@@ -218,6 +219,8 @@ const en = {
   autoResetExhausted: "Auto-reset exhausted accounts",
   autoResetExhaustedHelp:
     "When a stored quota snapshot is exhausted, consume a reset credit before routing if one is available.",
+  autoResetDisabled: "Disabled",
+  autoResetEnabled: "Enabled",
   maxAttempts: "Maximum attempts",
   maxAttemptsHelp: "Maximum number of accounts attempted for one request.",
   tokenRefresh: "Early token refresh",
@@ -348,6 +351,7 @@ const zh: Record<TranslationKey, string> = {
   quotaWindow: "{duration} 周期",
   quotaCaptured: "采集于 {date}",
   creditsBalance: "余额 {balance}",
+  resetCredits: "重置次数 {count}",
   revealAccountIdentity: "显示 {name} 的身份信息",
   hideAccountIdentity: "隐藏 {name} 的身份信息",
   disabled: "已停用",
@@ -478,6 +482,8 @@ const zh: Record<TranslationKey, string> = {
   autoResetExhausted: "自动重置耗尽账户",
   autoResetExhaustedHelp:
     "当已保存的额度快照显示耗尽时，路由前尝试消耗可用重置次数。",
+  autoResetDisabled: "已关闭",
+  autoResetEnabled: "已开启",
   maxAttempts: "最大尝试次数",
   maxAttemptsHelp: "单个请求最多尝试多少个账户。",
   tokenRefresh: "Token 提前刷新",

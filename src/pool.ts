@@ -57,8 +57,13 @@ export interface AccountUsage {
   primary?: UsageWindow;
   secondary?: UsageWindow;
   creditsBalance?: number;
+  resetCreditsAvailable?: number;
   capturedAt: number;
   error?: string;
+}
+
+export interface RateLimitResetCredits {
+  availableCount: number;
 }
 
 export interface PoolState {
@@ -177,6 +182,8 @@ export interface TokenIdentity {
 
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CREDITS_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const RESET_CREDIT_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -757,7 +764,13 @@ export class AccountPoolCore {
     }
     if (!response.ok)
       throw new Error(`Usage endpoint returned HTTP ${response.status}`);
-    account.usage = parseUsage(await response.json(), this.now());
+    const usage = parseUsage(await response.json(), this.now());
+    try {
+      usage.resetCreditsAvailable = await this.fetchResetCredits(account);
+    } catch {
+      usage.resetCreditsAvailable = usage.resetCreditsAvailable ?? undefined;
+    }
+    account.usage = usage;
   }
 
   private fetchUsage(account: AccountRecord): Promise<Response> {
@@ -768,6 +781,19 @@ export class AccountPoolCore {
         "chatgpt-account-id": account.accountId,
       },
     });
+  }
+
+  private async fetchResetCredits(account: AccountRecord): Promise<number> {
+    const response = await this.oauthFetch(RESET_CREDITS_URL, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${account.accessToken}`,
+        "chatgpt-account-id": account.accountId,
+      },
+    });
+    if (!response.ok)
+      throw new Error(`Reset credits endpoint returned HTTP ${response.status}`);
+    return parseResetCreditsAvailable(await response.json());
   }
 
   private async load(): Promise<PoolState> {
@@ -1134,6 +1160,15 @@ function resetOutcome(input: unknown): AccountResetStatus {
     return outcome;
   }
   throw new Error("Reset endpoint returned an incomplete response");
+}
+
+function parseResetCreditsAvailable(input: unknown): number {
+  const root = objectValue(input);
+  const direct = objectValue(root?.rate_limit_reset_credits);
+  const source = direct ?? root;
+  const value = optionalNumber(source?.available_count) ?? optionalNumber(source?.availableCount);
+  if (value === undefined) throw new Error("Reset credits response was incomplete");
+  return Math.max(0, Math.floor(value));
 }
 
 function resetOutcomeMessage(outcome: AccountResetStatus): string {

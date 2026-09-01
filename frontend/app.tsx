@@ -58,6 +58,7 @@ type Account = {
     primary?: UsageWindow;
     secondary?: UsageWindow;
     creditsBalance?: number;
+    resetCreditsAvailable?: number;
     capturedAt: number;
     error?: string;
   };
@@ -558,6 +559,9 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                           })}
                           {account.usage.creditsBalance !== undefined
                             ? ` · ${t("creditsBalance", { balance: formatNumber(locale, account.usage.creditsBalance) })}`
+                            : ""}
+                          {account.usage.resetCreditsAvailable !== undefined
+                            ? ` · ${t("resetCredits", { count: formatNumber(locale, account.usage.resetCreditsAvailable) })}`
                             : ""}
                         </small>
                       )}
@@ -1301,13 +1305,18 @@ function SettingsPage({
               <strong>{t("autoResetExhausted")}</strong>
               <small>{t("autoResetExhaustedHelp")}</small>
             </span>
-            <input
-              type="checkbox"
-              checked={draft.autoResetExhaustedAccounts}
+            <select
+              value={draft.autoResetExhaustedAccounts ? "enabled" : "disabled"}
               onChange={(e) =>
-                update("autoResetExhaustedAccounts", e.currentTarget.checked)
+                update(
+                  "autoResetExhaustedAccounts",
+                  e.currentTarget.value === "enabled",
+                )
               }
-            />
+            >
+              <option value="disabled">{t("autoResetDisabled")}</option>
+              <option value="enabled">{t("autoResetEnabled")}</option>
+            </select>
           </label>
           {settingRows.map(([key, title, text, min, max]) => (
             <label>

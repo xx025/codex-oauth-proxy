@@ -284,13 +284,15 @@ describe("AccountPoolCore", () => {
     const storage = new MemoryStorage();
     const usageFetch = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer access-a");
+        expect(headers.get("chatgpt-account-id")).toBe("a");
+        if (String(input).endsWith("/rate-limit-reset-credits")) {
+          return Response.json({ available_count: 3 });
+        }
         expect(String(input)).toBe(
           "https://chatgpt.com/backend-api/wham/usage",
         );
-        expect(new Headers(init?.headers).get("authorization")).toBe(
-          "Bearer access-a",
-        );
-        expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("a");
         return Response.json({
           rate_limit: {
             primary_window: {
@@ -333,6 +335,7 @@ describe("AccountPoolCore", () => {
         resetsAt: 3_000,
       },
       creditsBalance: 12.5,
+      resetCreditsAvailable: 3,
       capturedAt: 1_000,
     });
     expect(account).not.toHaveProperty("accessToken");
@@ -357,7 +360,8 @@ describe("AccountPoolCore", () => {
             },
           },
         }),
-      );
+      )
+      .mockResolvedValueOnce(Response.json({ available_count: 3 }));
     const pool = new AccountPoolCore(
       storage,
       oauthFetch as unknown as typeof fetch,
@@ -384,7 +388,7 @@ describe("AccountPoolCore", () => {
       resetCount: 1,
       failureCount: 0,
       cooldownUntil: 0,
-      usage: { primary: { remainingPercent: 95 } },
+      usage: { primary: { remainingPercent: 95 }, resetCreditsAvailable: 3 },
     });
     expect(account).not.toHaveProperty("accessToken");
     expect(account).not.toHaveProperty("refreshToken");
