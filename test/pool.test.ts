@@ -614,6 +614,23 @@ describe("AccountPoolCore", () => {
     });
   });
 
+  it("renames active proxy keys", async () => {
+    const storage = new MemoryStorage();
+    const pool = new AccountPoolCore(
+      storage,
+      vi.fn(),
+      () => 1_000,
+      "encryption-secret",
+    );
+    const created = await pool.generateProxyKey("Desktop");
+
+    expect(await pool.renameProxyKey(created.metadata.id, "Laptop")).toMatchObject({
+      id: created.metadata.id,
+      name: "Laptop",
+    });
+    expect(await pool.listProxyKeys()).toMatchObject([{ name: "Laptop" }]);
+  });
+
   it("automatically removes previously revoked proxy keys when listing", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(

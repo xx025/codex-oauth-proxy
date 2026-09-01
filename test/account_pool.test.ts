@@ -100,6 +100,29 @@ describe("AccountPool device routes", () => {
     expect(await list.json()).toMatchObject({ accounts: [{ id: imported.id, name: "Renamed" }] });
   });
 
+  it("renames proxy keys through Durable Object routes", async () => {
+    const { state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+    } as never);
+    const created = await object.fetch(new Request("https://pool/proxy-keys", {
+      method: "POST",
+      body: JSON.stringify({ name: "Desktop" }),
+    }));
+    const { metadata } = await created.json() as { metadata: { id: string } };
+
+    const renamed = await object.fetch(new Request(`https://pool/proxy-keys/${metadata.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Laptop" }),
+    }));
+
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ key: { id: metadata.id, name: "Laptop" } });
+    const list = await object.fetch(new Request("https://pool/proxy-keys"));
+    expect(await list.json()).toMatchObject({ keys: [{ id: metadata.id, name: "Laptop" }] });
+  });
+
   it("resets account quota through Durable Object routes", async () => {
     const { state } = durableState();
     const upstream = vi
@@ -112,6 +135,11 @@ describe("AccountPool device routes", () => {
             limit_window_seconds: 18_000,
             reset_at: 4_000,
           },
+          secondary_window: {
+            used_percent: 1,
+            limit_window_seconds: 604_800,
+            reset_at: 4_000,
+          },
         },
       }))
       .mockResolvedValueOnce(Response.json({ available_count: 2 }));
@@ -119,15 +147,19 @@ describe("AccountPool device routes", () => {
       KEY_ENCRYPTION_SECRET: "internal",
       NATIVE_EGRESS: { fetch: upstream },
     } as never);
+    await object.fetch(new Request("https://pool/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ tokenExpiryBufferMinutes: 5 }),
+    }));
     const created = await object.fetch(new Request("https://pool/accounts", {
       method: "POST",
-      body: JSON.stringify({
-        access_token: "access-token",
-        refresh_token: "refresh-token",
-        expiresAt: 10_000_000,
-        accountId: "workspace",
-        principalId: "user",
-      }),
+        body: JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expiresAt: 4_000_000_000_000,
+          accountId: "workspace",
+          principalId: "user",
+        }),
     }));
     const { account: imported } = await created.json() as { account: { id: string } };
 
@@ -142,11 +174,17 @@ describe("AccountPool device routes", () => {
         id: imported.id,
         lastResetStatus: "reset",
         resetCount: 1,
-        usage: { primary: { remainingPercent: 99 } },
+        usage: {
+          primary: { remainingPercent: 99 },
+          resetCreditsAvailable: 2,
+        },
       },
     });
     expect((upstream.mock.calls[0][0] as Request).url).toBe(
       "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+    );
+    expect((upstream.mock.calls[1][0] as Request).url).toBe(
+      "https://chatgpt.com/backend-api/wham/usage",
     );
     expect((upstream.mock.calls[2][0] as Request).url).toBe(
       "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",

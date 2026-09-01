@@ -200,6 +200,10 @@ export class AccountPool extends DurableObject<Env> {
       if (keyMatch && request.method === "DELETE") {
         return json({ key: await this.core.revokeProxyKey(keyMatch[1]) });
       }
+      if (keyMatch && request.method === "PATCH") {
+        const { name = "" } = await request.json() as { name?: string };
+        return json({ key: await this.core.renameProxyKey(keyMatch[1], name) });
+      }
       const revealMatch = url.pathname.match(/^\/proxy-keys\/([^/]+)\/reveal$/);
       if (revealMatch && request.method === "GET") {
         return json({ key: await this.core.revealProxyKey(revealMatch[1]) });

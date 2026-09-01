@@ -722,6 +722,20 @@ function Keys({ keys, setKeys, open, notify }: any) {
       notify(t("revokeFailed"), message(error, t("requestFailed")), true);
     }
   };
+  const rename = async (key: ProxyKey) => {
+    const name = prompt(t("keyRenamePrompt"), key.name)?.trim();
+    if (!name || name === key.name) return;
+    try {
+      const data = await api<{ key: ProxyKey }>(
+        `/admin/api/proxy-keys/${encodeURIComponent(key.id)}`,
+        { method: "PATCH", body: JSON.stringify({ name }) },
+      );
+      setKeys(keys.map((item: ProxyKey) => (item.id === key.id ? data.key : item)));
+      notify(t("keyRenamed"), t("keyRenamedText"));
+    } catch (error) {
+      notify(t("keyRenameFailed"), message(error, t("requestFailed")), true);
+    }
+  };
   return (
     <>
       <PageHeader
@@ -760,6 +774,11 @@ function Keys({ keys, setKeys, open, notify }: any) {
                     : t("createdBeforeUpgrade")}
                 </span>
                 <div class="row-actions">
+                  {!key.revokedAt && (
+                    <Button onClick={() => rename(key)}>
+                      {t("rename")}
+                    </Button>
+                  )}
                   {!key.revokedAt && key.recoverable && (
                     <Button onClick={() => reveal(key)}>
                       {revealed[key.id] ? t("hide") : t("reveal")}

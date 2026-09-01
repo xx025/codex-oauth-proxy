@@ -620,6 +620,19 @@ export class AccountPoolCore {
     return decryptValue(record.encryptedKey, this.encryptionSecret);
   }
 
+  async renameProxyKey(id: string, name: string): Promise<ProxyKeyMetadata> {
+    if (id === "legacy") throw new PoolError(400, "Legacy key cannot be renamed");
+    const normalizedName = name.trim();
+    if (!normalizedName || normalizedName.length > 80)
+      throw new PoolError(400, "Invalid key name");
+    const state = await this.load();
+    const record = requiredProxyKey(state, id);
+    if (record.revokedAt) throw new PoolError(410, "Key is revoked");
+    record.name = normalizedName;
+    await this.storage.put(state);
+    return redactProxyKey(record);
+  }
+
   async revokeProxyKey(id: string): Promise<ProxyKeyMetadata> {
     const state = await this.load();
     if (id === "legacy") {
