@@ -1,4 +1,4 @@
-import { ADMIN_CSS, ADMIN_JS } from "./ui.generated";
+import { ADMIN_CSS, ADMIN_JS, APP_INFO } from "./ui.generated";
 
 export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="8" y1="6" x2="56" y2="60" gradientUnits="userSpaceOnUse"><stop stop-color="#2899f5"/><stop offset=".55" stop-color="#0f6cbd"/><stop offset="1" stop-color="#08477d"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><path d="M47 18.5A21 21 0 1 0 48 45" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/><circle cx="47" cy="18.5" r="4.5" fill="#fff"/><circle cx="48" cy="45" r="4.5" fill="#fff"/><path d="M24 25h15M24 39h15" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/></svg>`;
 
@@ -11,4 +11,5 @@ export const ADMIN_HTML = `<!doctype html>
 export const ADMIN_ASSETS: Record<string, { body: string; contentType: string }> = {
   "/admin/assets/app.js": { body: ADMIN_JS, contentType: "text/javascript; charset=utf-8" },
   "/admin/assets/app.css": { body: ADMIN_CSS, contentType: "text/css; charset=utf-8" },
+  "/admin/assets/app-info.json": { body: JSON.stringify(APP_INFO), contentType: "application/json; charset=utf-8" },
 };

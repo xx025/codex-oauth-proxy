@@ -670,7 +670,7 @@ function cloneWithSecurityHeaders(response: Response): Response {
 function secureHeaders(contentType?: string): Headers {
   const headers = new Headers({
     "cache-control": "no-store",
-    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+    "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; navigate-to 'self' https://github.com",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",

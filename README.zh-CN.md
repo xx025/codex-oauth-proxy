@@ -24,6 +24,11 @@
 
 ![管理面板](docs/image.png)
 
+## 测试站点
+
+- 地址：<https://cloud-router.vktest.workers.dev/>
+- 密码：`admin`
+
 ## 部署
 
 点击上方按钮即可在浏览器创建 Worker，不需要下载代码，不需要安装 Node.js，也不需要本地运行 npm。
@@ -38,7 +43,7 @@ Durable Objects 会在 Wrangler 成功部署时自动创建，不需要手动创
 
 Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输入框。首次部署可以先创建不带 VPC 出口的 Worker；之后进入 **Settings > Build > Build variables and secrets** 添加 `CLOUDFLARE_TUNNEL_ID`，再重新部署后使用 API。
 
-需要 VPC 出口连接器时，可以参考 [cloud-router-vpc-egress](https://github.com/xx025/cloud-router-vpc-egress)：这是一个最小化的 `cloudflared` 参考实现，并标注了 Railway 快速部署入口。Cloudflare 官方 tunnel connector 文档见 [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/)。
+需要 VPC 出口连接器时，可以参考 [cloudflared](https://github.com/xx025/cloudflared)：这是一个最小化的 `cloudflared` 参考实现，并标注了 Railway 快速部署入口。Cloudflare 官方 tunnel connector 文档见 [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/)。
 
 中文部署说明见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
 

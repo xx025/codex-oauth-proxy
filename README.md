@@ -24,6 +24,11 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 
 ![Administration UI](docs/image.png)
 
+## Demo
+
+- Test site: <https://cloud-router.vktest.workers.dev/>
+- Password: `admin`
+
 ## Deploy
 
 Click the button above to create the Worker in your browser. No local download, Node.js install, or npm command is required.
@@ -38,7 +43,7 @@ Durable Objects are created automatically during a successful Wrangler deploymen
 
 Cloudflare's Deploy button does not currently show a Tunnel ID input during the initial setup. The first deployment can create the Worker without VPC egress; add `CLOUDFLARE_TUNNEL_ID` under **Settings > Build > Build variables and secrets**, then retry the deployment before using the API.
 
-Need a VPC egress connector? See [cloud-router-vpc-egress](https://github.com/xx025/cloud-router-vpc-egress), a minimal `cloudflared` reference implementation that can be quickly deployed to Railway. For Cloudflare's official tunnel connector documentation, see [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/).
+Need a VPC egress connector? See [cloudflared](https://github.com/xx025/cloudflared), a minimal `cloudflared` reference implementation that can be quickly deployed to Railway. For Cloudflare's official tunnel connector documentation, see [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/).
 
 See [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 

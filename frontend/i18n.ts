@@ -228,6 +228,11 @@ const en = {
   appearancePreferences: "Appearance and language",
   appearancePreferencesHelp:
     "Browser-local preferences apply immediately and are not part of runtime settings.",
+  projectInfo: "Project information",
+  projectInfoHelp: "Build metadata and source repository.",
+  projectVersion: "Version",
+  projectAuthor: "Author",
+  projectRepository: "Repository",
   themePreferenceHelp:
     "Use the system color scheme or choose a theme for this browser.",
   languagePreferenceHelp:
@@ -517,6 +522,11 @@ const zh: Record<TranslationKey, string> = {
   appearancePreferences: "外观与语言",
   appearancePreferencesHelp:
     "仅保存在当前浏览器，立即生效，不会包含在运行设置中。",
+  projectInfo: "项目信息",
+  projectInfoHelp: "构建元数据与源码仓库。",
+  projectVersion: "版本",
+  projectAuthor: "作者",
+  projectRepository: "仓库",
   themePreferenceHelp: "跟随系统配色，或为当前浏览器选择主题。",
   languagePreferenceHelp: "跟随浏览器语言，或为当前浏览器选择语言。",
   selectionStrategy: "账户选择策略",

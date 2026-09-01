@@ -1,7 +1,13 @@
 {
   "name": "cloud-router",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
+  "author": "xx025",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xx025/cloud-router"
+  },
   "cloudflare": {
     "bindings": {
       "KEY_ENCRYPTION_SECRET": {

@@ -16,7 +16,7 @@ Durable Objects 会在 Wrangler 成功部署时自动创建，不需要手动创
 
 ## VPC 出口连接器参考实现
 
-CloudRouter 要求通过 `NATIVE_EGRESS` 使用 Cloudflare VPC 出口。如果需要一个最小化的 tunnel connector，可以参考 [cloud-router-vpc-egress](https://github.com/xx025/cloud-router-vpc-egress)。这个项目只关注 `cloudflared`，并提供 Railway 快速部署入口。
+CloudRouter 要求通过 `NATIVE_EGRESS` 使用 Cloudflare VPC 出口。如果需要一个最小化的 tunnel connector，可以参考 [cloudflared](https://github.com/xx025/cloudflared)。这个项目只关注 `cloudflared`，并提供 Railway 快速部署入口。
 
 Cloudflare 官方 `cloudflared` 服务文档：[Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/)。
 

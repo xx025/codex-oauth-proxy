@@ -91,6 +91,7 @@ type Stats = {
 };
 type Toast = { title: string; message: string; error?: boolean };
 type Dialog = "import" | "device" | "browser" | "key" | null;
+type AppInfo = { version?: string; author?: string; repository?: string };
 
 const validViews = new Set([
   "home",
@@ -160,6 +161,7 @@ function App({
     [stats, setStats] = useState<Stats | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null),
     [toast, setToast] = useState<Toast | null>(null);
+  const [appInfo, setAppInfo] = useState<AppInfo>({});
   const notify = (title: string, text: string, error = false) =>
     setToast({ title, message: text, error });
   const loadCore = async () => {
@@ -194,6 +196,12 @@ function App({
     loadCore()
       .then(() => setAuthenticated(true))
       .catch(() => setAuthenticated(false));
+  }, []);
+  useEffect(() => {
+    fetch("/admin/assets/app-info.json")
+      .then((response) => (response.ok ? response.json() : {}))
+      .then(setAppInfo)
+      .catch(() => setAppInfo({}));
   }, []);
   useEffect(() => {
     const update = () => setView(hashView());
@@ -300,6 +308,7 @@ function App({
             notify={notify}
             theme={theme}
             language={language}
+            appInfo={appInfo}
             onTheme={setTheme}
             onLanguage={setLanguage}
           />
@@ -1265,6 +1274,7 @@ function SettingsPage({
   notify,
   theme,
   language,
+  appInfo,
   onTheme,
   onLanguage,
 }: {
@@ -1273,6 +1283,7 @@ function SettingsPage({
   notify: Function;
   theme: string;
   language: LanguagePreference;
+  appInfo: AppInfo;
   onTheme: (value: string) => void;
   onLanguage: (value: LanguagePreference) => void;
 }) {
@@ -1341,6 +1352,36 @@ function SettingsPage({
               <option value="zh-CN">{t("languageChinese")}</option>
               <option value="en">{t("languageEnglish")}</option>
             </select>
+          </label>
+        </div>
+      </Panel>
+      <Panel title={t("projectInfo")} subtitle={t("projectInfoHelp")}>
+        <div class="settings">
+          <label>
+            <span>
+              <strong>{t("projectVersion")}</strong>
+              <small>{appInfo.version || t("unknown")}</small>
+            </span>
+          </label>
+          <label>
+            <span>
+              <strong>{t("projectAuthor")}</strong>
+              <small>{appInfo.author || t("unknown")}</small>
+            </span>
+          </label>
+          <label>
+            <span>
+              <strong>{t("projectRepository")}</strong>
+              <small>
+                {appInfo.repository ? (
+                  <a href={appInfo.repository} target="_blank" rel="noreferrer">
+                    {appInfo.repository}
+                  </a>
+                ) : (
+                  t("unknown")
+                )}
+              </small>
+            </span>
           </label>
         </div>
       </Panel>
