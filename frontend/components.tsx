@@ -1,4 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
+import { useState } from "preact/hooks";
 import { useI18n, type TranslationKey } from "./i18n";
 
 export type View =
@@ -94,9 +95,10 @@ export function AppShell({
   children: ComponentChildren;
 }) {
   const { t } = useI18n();
+  const [collapsed, setCollapsed] = useState(false);
   const current = nav.find((item) => item.id === view)!;
   return (
-    <div class="app-shell">
+    <div class={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
       <aside class="sidebar">
         <a class="brand" href="#home">
           <Logo />
@@ -105,6 +107,14 @@ export function AppShell({
             <small>OAuth gateway</small>
           </span>
         </a>
+        <button
+          type="button"
+          class="sidebar-toggle"
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          <Icon name={collapsed ? "home" : "close"} />
+        </button>
         <nav aria-label={t("mainNavigation")}>
           <span class="nav-label">{t("management")}</span>
           {nav.map(({ id, label, icon }) => (

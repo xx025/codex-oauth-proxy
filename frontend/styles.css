@@ -158,6 +158,18 @@ code {
   border-right: 1px solid var(--line);
   background: var(--surface);
 }
+.sidebar-toggle {
+  align-self: flex-end;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.sidebar-toggle:hover {
+  background: var(--surface-hover);
+}
 .brand {
   display: flex;
   align-items: center;
@@ -253,6 +265,37 @@ code {
   display: grid;
   gap: 8px;
   margin-top: auto;
+}
+.sidebar-collapsed {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+.sidebar-collapsed .sidebar {
+  padding-inline: 10px;
+}
+.sidebar-collapsed .sidebar-toggle {
+  align-self: center;
+}
+.sidebar-collapsed .brand-copy,
+.sidebar-collapsed .nav-label,
+.sidebar-collapsed .sidebar nav a span,
+.sidebar-collapsed .service-state span,
+.sidebar-collapsed .logout span {
+  display: none;
+}
+.sidebar-collapsed .sidebar nav a,
+.sidebar-collapsed .service-state,
+.sidebar-collapsed .logout {
+  justify-content: center;
+}
+.sidebar-collapsed .sidebar nav a {
+  padding-inline: 0;
+}
+.sidebar-collapsed .sidebar nav a .icon,
+.sidebar-collapsed .logout .icon {
+  margin: 0;
+}
+.sidebar-collapsed .sidebar-foot {
+  align-items: center;
 }
 .service-state {
   display: flex;
