@@ -1,113 +1,86 @@
-# Cloudflare OAuth API 网关
+# ChatGPT OAuth API 代理
 
 [English](README.md) | 简体中文
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
 
-兼容 OpenAI API 的多账号 OAuth 网关。应用由 TypeScript 单语言实现，API、管理面板、OAuth、账号调度与流式转换全部部署在 Cloudflare Workers；持久状态和高 CPU 代理执行由 Durable Object 承担。
+把 ChatGPT OAuth 账号转换成兼容 OpenAI API 的服务。项目完整运行在 Cloudflare Workers 和 Durable Objects 上，内置管理面板，可添加账号、生成客户端 API Key、查看请求统计。
 
-本仓库不包含本地应用服务、容器、原生二进制或 WebAssembly。由于上游拒绝普通 Worker 出口 IP，上游请求必须通过 `NATIVE_EGRESS` Cloudflare VPC 绑定转发，绑定缺失时会直接失败，不会回退到普通出口。
+适合需要让客户端调用 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 或 `/mcp`，但上游凭据通过 ChatGPT OAuth 账号统一管理的场景。
 
-> 上游接口并非公开、稳定的正式 API，可能随官方客户端变化。请只使用自己有权控制的账号，并遵守相关条款。
+> 上游接口不是公开稳定 API，可能随官方客户端变化。请只使用自己有权控制的账号，并遵守相关条款。
 
-## 主要功能
+## 截图
 
-- OpenAI 兼容的 Models、Chat Completions 和 Responses API
-- SSE 流式转发与非流式聚合
-- 多账号轮询、自动刷新、冷却和故障转移
-- 设备码、浏览器 PKCE 和手动凭据导入
-- 独立客户端 API 密钥、管理面板和请求统计
-- 无状态 MCP JSON-RPC 接口
-- 出口域名白名单、凭据脱敏和有界请求/响应缓冲
+![管理面板](docs/image.png)
 
-## 架构
+## 功能
+
+- 兼容 OpenAI Models、Chat Completions 和 Responses API
+- 支持 ChatGPT OAuth 账号导入、设备码登录、浏览器 PKCE 登录
+- 多账号轮询、冷却、自动刷新和故障转移
+- 支持 SSE 流式响应和非流式聚合响应
+- 客户端 API Key 与管理员登录分离
+- 内置管理面板和请求统计
+- 支持无状态 MCP JSON-RPC 接口
+- 强制通过 Cloudflare `NATIVE_EGRESS` VPC 出口访问上游
+
+## 工作方式
 
 ```text
-API 客户端 / 管理员
-          │
-          ▼
-入口 Worker（路由与认证）
-          │
-          ├── 管理请求 ─────────────► AccountPool Durable Object
-          │                           账号、OAuth、密钥、策略、统计
-          │
-          └── OpenAI API / MCP ────► ProxyExecutor Durable Objects
-                                      32 个执行分片
-                                          │            │
-                                          │            └──► AccountPool
-                                          │                 账号选择与结果反馈
-                                          ▼
-                                  NATIVE_EGRESS VPC Network
-                                          │
-                                          ▼
-                               chatgpt.com / auth.openai.com
+客户端 / 管理员
+      |
+      v
+Cloudflare Worker
+      |
+      +-- 管理面板和设置 --> AccountPool Durable Object
+      |
+      +-- API 请求 --------> ProxyExecutor Durable Objects
+                              |
+                              v
+                        NATIVE_EGRESS VPC
+                              |
+                              v
+                    chatgpt.com / auth.openai.com
 ```
 
-网关将控制面与数据面分离。`AccountPool` 是控制面，统一管理持久化账号状态、OAuth 凭据、客户端密钥、调度策略、冷却状态和聚合统计。分片的 `ProxyExecutor` 是数据面，负责转换请求、通过 `AccountPool` 选择账号、执行账号故障转移，并沿原始客户端连接流式返回响应。
+OAuth Token、账号、客户端密钥、设置和统计信息保存在 Durable Object Storage。提示词和响应内容不会写入持久存储。
 
-长时间请求仍沿用同一条流式数据路径，不会转换成后台任务。执行分片隔离请求处理并支持横向扩展，集中式账号池则保证调度决策一致。提示词与响应不会写入 Durable Object 存储。VPC/Tunnel 仅作为网络出口层，出口节点不运行应用服务或容器。
-
-## 部署前提
-
-- Node.js 24 或更高版本
-- 已登录 Wrangler 的 Cloudflare 账号
-- 已创建且在线的 Cloudflare Tunnel/VPC 出口
-- 该出口的公网 IP 可以访问 ChatGPT 上游
-
-通过 `CLOUDFLARE_TUNNEL_ID` 设置你的 Cloudflare Tunnel/VPC 出口 ID，或替换 `wrangler.jsonc` 中的占位 Tunnel ID：
-
-```jsonc
-"vpc_networks": [
-  {
-    "binding": "NATIVE_EGRESS",
-    "tunnel_id": "YOUR_TUNNEL_ID",
-    "remote": true
-  }
-]
-```
+所有上游请求都必须通过 `NATIVE_EGRESS` VPC 绑定。缺少该绑定时，Worker 会直接失败，不会回退到普通 Worker 出口。
 
 ## 部署
 
-更完整的 Cloudflare 部署、项目改名和一键部署说明见 [Cloudflare 部署文档](docs/deployment.zh-CN.md)。
+完整部署步骤见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
 
-也可以使用上方的 Deploy to Cloudflare 按钮。按引导部署时，保持 `NATIVE_EGRESS` 绑定名不变，选择你自己的 Tunnel/VPC 出口，并填写 `KEY_ENCRYPTION_SECRET`。
+快速部署：
 
 ```bash
 npm ci
 npx wrangler login
 npx wrangler secret put KEY_ENCRYPTION_SECRET
-npm run check
 CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
 
-`KEY_ENCRYPTION_SECRET` 必须是足够长的随机值，用于加密可恢复的客户端密钥并签名管理员会话。
-
-如果管理域名未使用 Cloudflare Access，再设置管理员登录密钥：
+如果管理域名没有使用 Cloudflare Access 保护，还需要设置：
 
 ```bash
 npx wrangler secret put ADMIN_API_KEY
 ```
 
-部署完成后先检查健康状态：
+检查部署：
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/health
 ```
 
-然后打开 Worker 根地址，通过 Cloudflare Access 或 `ADMIN_API_KEY` 登录，添加 OAuth 账号并生成客户端 API 密钥。客户端可使用 `Authorization: Bearer <密钥>` 或 `X-API-Key: <密钥>`。
+打开 Worker 地址，添加 ChatGPT OAuth 账号，然后创建客户端 API Key。客户端可使用任一请求头：
 
-## API
+```text
+Authorization: Bearer YOUR_CLIENT_KEY
+X-API-Key: YOUR_CLIENT_KEY
+```
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/health` | Worker 健康检查 |
-| `GET` | `/v1/models` | 当前账号可用模型与推理强度 |
-| `POST` | `/v1/chat/completions` | Chat Completions 兼容接口 |
-| `POST` | `/v1/responses` | Responses 兼容接口 |
-| `POST` | `/mcp` | MCP JSON-RPC 接口 |
-| `GET` | `/` | 管理面板 |
-
-调用示例：
+## API 示例
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -116,30 +89,24 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-生产环境建议分别绑定 API 域名和管理域名，只对管理域名启用 Cloudflare Access，避免 API 客户端被重定向到交互式登录。
-
-## 开发与验证
+## 开发
 
 ```bash
-npm run types       # 根据 wrangler.jsonc 重新生成 Worker 类型
 npm run typecheck
 npm test
-npm run build       # wrangler deploy --dry-run
-npm run check       # 执行全部校验
+npm run build
 ```
 
-核心文件：
+主要文件：
 
-- `src/index.ts`：Worker 路由、管理认证、故障转移和 Durable Object
-- `src/api.ts`：OpenAI 兼容转换与 SSE 处理
-- `src/pool.ts`：账号池、客户端密钥、设置与统计
-- `src/oauth.ts`：OAuth 登录、刷新与账号身份
-- `src/egress.ts`：VPC 出口白名单和强制绑定
-- `src/mcp.ts`：MCP JSON-RPC 适配
-- `src/ui.ts`：内嵌管理界面
-- `wrangler.jsonc`：Cloudflare 部署配置
-
-OAuth 凭据和刷新令牌只保存在 Durable Object 中，对外账号响应会脱敏。出口白名单只允许 `chatgpt.com` 和 `auth.openai.com`。
+- `src/index.ts`：Worker 路由和 Durable Objects
+- `src/api.ts`：OpenAI 兼容请求和响应处理
+- `src/pool.ts`：账号池、客户端密钥、设置和统计
+- `src/oauth.ts`：OAuth 登录和 Token 刷新
+- `src/egress.ts`：强制 VPC 出口和上游域名白名单
+- `src/mcp.ts`：MCP 适配
+- `src/ui.ts`：内置管理面板
+- `wrangler.jsonc`：Cloudflare Worker 配置
 
 ## 许可证
 
