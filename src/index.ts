@@ -357,12 +357,12 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
     if (cached) return cloneWithSecurityHeaders(cached);
   }
 
+  const settings = await loadPoolSettings(env);
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await readRequestBody(request);
-  const prepared = prepareProxyRequest(url.pathname, requestBody);
+  const prepared = prepareProxyRequest(url.pathname, requestBody, { serviceTier: settings.serviceTier });
   const metadata: RequestMetadata = { model: prepared.model, endpoint: url.pathname.slice(0, 80), streaming: prepared.streaming };
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
-  const settings = await loadPoolSettings(env);
   const upstreamFetch = createUpstreamFetch(env);
 
   for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {

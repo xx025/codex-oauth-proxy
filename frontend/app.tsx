@@ -73,6 +73,7 @@ type ProxyKey = {
 };
 type Settings = {
   selectionStrategy: string;
+  serviceTier: "standard" | "fast";
   maxAccountAttempts: number;
   tokenExpiryBufferMinutes: number;
   rateLimitCooldownSeconds: number;
@@ -1244,7 +1245,7 @@ function Table({ headers, rows }: { headers: string[]; rows: any[][] }) {
 
 type NumericSettingKey = Exclude<
   keyof Settings,
-  "selectionStrategy" | "autoResetExhaustedAccounts"
+  "selectionStrategy" | "serviceTier" | "autoResetExhaustedAccounts"
 >;
 const settingRows: Array<
   [NumericSettingKey, TranslationKey, TranslationKey, number, number]
@@ -1380,6 +1381,19 @@ function SettingsPage({
             >
               <option value="disabled">{t("autoResetDisabled")}</option>
               <option value="enabled">{t("autoResetEnabled")}</option>
+            </select>
+          </label>
+          <label>
+            <span>
+              <strong>{t("serviceTier")}</strong>
+              <small>{t("serviceTierHelp")}</small>
+            </span>
+            <select
+              value={draft.serviceTier}
+              onChange={(e) => update("serviceTier", e.currentTarget.value)}
+            >
+              <option value="standard">{t("serviceTierStandard")}</option>
+              <option value="fast">{t("serviceTierFast")}</option>
             </select>
           </label>
           {settingRows.map(([key, title, text, min, max]) => (

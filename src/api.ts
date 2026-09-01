@@ -34,6 +34,10 @@ export interface PreparedProxyRequest {
   body?: Uint8Array;
 }
 
+export interface ProxyRequestOptions {
+  serviceTier?: "standard" | "fast";
+}
+
 export async function readRequestBody(request: Request): Promise<ArrayBuffer> {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) {
@@ -69,6 +73,7 @@ export async function readRequestBody(request: Request): Promise<ArrayBuffer> {
 export function prepareProxyRequest(
   pathname: string,
   bodyBytes?: ArrayBuffer,
+  options: ProxyRequestOptions = {},
 ): PreparedProxyRequest {
   if (pathname === "/v1/models") {
     return {
@@ -80,8 +85,8 @@ export function prepareProxyRequest(
     };
   }
   const body = parseBody(bodyBytes);
-  if (pathname === "/v1/responses") return prepareResponsesRequest(body);
-  if (pathname === "/v1/chat/completions") return prepareChatRequest(body);
+  if (pathname === "/v1/responses") return prepareResponsesRequest(body, options);
+  if (pathname === "/v1/chat/completions") return prepareChatRequest(body, options);
   throw new PoolError(404, "Not found");
 }
 
@@ -322,7 +327,10 @@ export async function bufferChatCompletion(
   };
 }
 
-function prepareResponsesRequest(body: JsonObject): PreparedProxyRequest {
+function prepareResponsesRequest(
+  body: JsonObject,
+  options: ProxyRequestOptions,
+): PreparedProxyRequest {
   const clientStream = body.stream === true;
   const model = normalizeModel(stringValue(body.model));
   const reasoning = reasoningSettings(body, model);
@@ -332,6 +340,7 @@ function prepareResponsesRequest(body: JsonObject): PreparedProxyRequest {
   delete body.max_output_tokens;
   delete body.max_tokens;
   delete body.reasoning_effort;
+  applyServiceTier(body, options.serviceTier);
   normalizeResponsesInput(body);
   body.include = ["reasoning.encrypted_content"];
   if (!("tool_choice" in body)) body.tool_choice = "auto";
@@ -347,7 +356,10 @@ function prepareResponsesRequest(body: JsonObject): PreparedProxyRequest {
   };
 }
 
-function prepareChatRequest(body: JsonObject): PreparedProxyRequest {
+function prepareChatRequest(
+  body: JsonObject,
+  options: ProxyRequestOptions,
+): PreparedProxyRequest {
   const model = normalizeModel(stringValue(body.model));
   const input: unknown[] = [];
   const instructions: string[] = [];
@@ -412,6 +424,7 @@ function prepareChatRequest(body: JsonObject): PreparedProxyRequest {
     store: false,
     stream: true,
   };
+  applyServiceTier(upstream, options.serviceTier);
   if (typeof body.prompt_cache_key === "string")
     upstream.prompt_cache_key = body.prompt_cache_key;
   return {
@@ -460,6 +473,11 @@ function normalizeResponsesInput(body: JsonObject): void {
     filtered.unshift({ role: "developer", content: systemText });
   body.instructions = instructions || systemText;
   body.input = filtered;
+}
+
+function applyServiceTier(body: JsonObject, serviceTier: ProxyRequestOptions["serviceTier"]): void {
+  delete body.service_tier;
+  if (serviceTier === "fast") body.service_tier = "fast";
 }
 
 function normalizeModel(input: string): string {

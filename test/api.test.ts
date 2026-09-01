@@ -123,6 +123,37 @@ describe("Cloudflare-native API proxy", () => {
     });
   });
 
+  it("applies global fast service tier to upstream requests", () => {
+    const responses = prepareProxyRequest(
+      "/v1/responses",
+      body({ model: "gpt-5.5", input: "Hello", service_tier: "standard" }),
+      { serviceTier: "fast" },
+    );
+    expect(JSON.parse(new TextDecoder().decode(responses.body))).toMatchObject({
+      service_tier: "fast",
+    });
+
+    const chat = prepareProxyRequest(
+      "/v1/chat/completions",
+      body({ model: "gpt-5.5", messages: [{ role: "user", content: "Hi" }] }),
+      { serviceTier: "fast" },
+    );
+    expect(JSON.parse(new TextDecoder().decode(chat.body))).toMatchObject({
+      service_tier: "fast",
+    });
+  });
+
+  it("omits service tier by default", () => {
+    const prepared = prepareProxyRequest(
+      "/v1/responses",
+      body({ model: "gpt-5.5", input: "Hello", service_tier: "fast" }),
+    );
+    const upstream = JSON.parse(
+      new TextDecoder().decode(prepared.body),
+    ) as Record<string, unknown>;
+    expect(upstream.service_tier).toBeUndefined();
+  });
+
   it("transforms upstream Responses events into streaming chat chunks", async () => {
     const transformed = transformChatStream(
       stream(upstreamEvents().slice(0, 80), upstreamEvents().slice(80)),

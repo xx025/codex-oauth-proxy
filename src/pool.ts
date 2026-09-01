@@ -77,6 +77,7 @@ export interface PoolState {
 }
 
 export type SelectionStrategy = "round_robin" | "least_failures" | "quota_weighted";
+export type ServiceTier = "standard" | "fast";
 
 export interface PoolSettings {
   selectionStrategy: SelectionStrategy;
@@ -86,6 +87,7 @@ export interface PoolSettings {
   authCooldownSeconds: number;
   serverErrorCooldownSeconds: number;
   autoResetExhaustedAccounts: boolean;
+  serviceTier: ServiceTier;
 }
 
 export const DEFAULT_POOL_SETTINGS: PoolSettings = {
@@ -96,6 +98,7 @@ export const DEFAULT_POOL_SETTINGS: PoolSettings = {
   authCooldownSeconds: 300,
   serverErrorCooldownSeconds: 15,
   autoResetExhaustedAccounts: false,
+  serviceTier: "standard",
 };
 
 export interface TokenUsage {
@@ -268,6 +271,10 @@ export class AccountPoolCore {
         previous.autoResetExhaustedAccounts,
         "automatic quota reset",
       ),
+      serviceTier:
+        patch.serviceTier === undefined
+          ? previous.serviceTier
+          : parseServiceTier(patch.serviceTier),
     };
     await this.storage.put(current);
     return { ...current.settings };
@@ -1013,6 +1020,11 @@ function settingsFor(state: PoolState): PoolSettings {
 function parseSelectionStrategy(value: unknown): SelectionStrategy {
   if (value === "round_robin" || value === "least_failures" || value === "quota_weighted") return value;
   throw new PoolError(400, "Invalid account selection strategy");
+}
+
+function parseServiceTier(value: unknown): ServiceTier {
+  if (value === "standard" || value === "fast") return value;
+  throw new PoolError(400, "Invalid service tier");
 }
 
 function quotaScore(account: AccountRecord): number {

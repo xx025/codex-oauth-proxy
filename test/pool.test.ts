@@ -54,6 +54,7 @@ describe("AccountPoolCore", () => {
     const pool = new AccountPoolCore(storage);
     expect(await pool.getSettings()).toMatchObject({
       selectionStrategy: "round_robin",
+      serviceTier: "standard",
       maxAccountAttempts: 3,
       tokenExpiryBufferMinutes: 60,
     });
@@ -66,9 +67,11 @@ describe("AccountPoolCore", () => {
       authCooldownSeconds: 600,
       serverErrorCooldownSeconds: 25,
       autoResetExhaustedAccounts: true,
+      serviceTier: "fast",
     });
     expect(settings).toMatchObject({
       selectionStrategy: "least_failures",
+      serviceTier: "fast",
       maxAccountAttempts: 5,
       autoResetExhaustedAccounts: true,
     });
@@ -78,6 +81,9 @@ describe("AccountPoolCore", () => {
     ).rejects.toMatchObject({ status: 400 });
     await expect(
       pool.updateSettings({ autoResetExhaustedAccounts: "yes" }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      pool.updateSettings({ serviceTier: "priority" }),
     ).rejects.toMatchObject({ status: 400 });
   });
 

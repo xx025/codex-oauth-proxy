@@ -241,6 +241,11 @@ const en = {
     "When a stored quota snapshot is exhausted, consume a reset credit before routing if one is available.",
   autoResetDisabled: "Disabled",
   autoResetEnabled: "Enabled",
+  serviceTier: "Codex speed",
+  serviceTierHelp:
+    "Use Standard mode or force Fast mode for supported Codex models. Fast mode consumes more credits.",
+  serviceTierStandard: "Standard",
+  serviceTierFast: "Fast",
   maxAttempts: "Maximum attempts",
   maxAttemptsHelp: "Maximum number of accounts attempted for one request.",
   tokenRefresh: "Early token refresh",
@@ -525,6 +530,11 @@ const zh: Record<TranslationKey, string> = {
     "当已保存的额度快照显示耗尽时，路由前尝试消耗可用重置次数。",
   autoResetDisabled: "已关闭",
   autoResetEnabled: "已开启",
+  serviceTier: "Codex 速度",
+  serviceTierHelp:
+    "使用标准模式，或对支持的 Codex 模型强制开启快速模式。快速模式会消耗更多额度。",
+  serviceTierStandard: "标准",
+  serviceTierFast: "快速",
   maxAttempts: "最大尝试次数",
   maxAttemptsHelp: "单个请求最多尝试多少个账户。",
   tokenRefresh: "Token 提前刷新",
