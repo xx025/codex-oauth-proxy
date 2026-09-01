@@ -166,6 +166,7 @@ describe("edge worker", () => {
     expect(html).toContain('/admin/assets/app.css');
     expect(root.headers.get("content-security-policy")).toContain("script-src 'self' 'unsafe-inline'");
     expect(root.headers.get("content-security-policy")).toContain("style-src 'self'");
+    expect(root.headers.get("content-security-policy")).toContain("img-src 'self' https://st2.ai55.cc");
   });
 
   it("serves the locally bundled Preact application from same-origin Worker routes", async () => {

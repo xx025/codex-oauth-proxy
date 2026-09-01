@@ -233,6 +233,9 @@ const en = {
   projectVersion: "Version",
   projectAuthor: "Author",
   projectRepository: "Repository",
+  projectDonationQr: "Donation QR code",
+  projectWechat: "Author WeChat",
+  projectOfficialAccount: "Official account",
   themePreferenceHelp:
     "Use the system color scheme or choose a theme for this browser.",
   languagePreferenceHelp:
@@ -527,6 +530,9 @@ const zh: Record<TranslationKey, string> = {
   projectVersion: "版本",
   projectAuthor: "作者",
   projectRepository: "仓库",
+  projectDonationQr: "赞赏码",
+  projectWechat: "作者微信",
+  projectOfficialAccount: "公众号",
   themePreferenceHelp: "跟随系统配色，或为当前浏览器选择主题。",
   languagePreferenceHelp: "跟随浏览器语言，或为当前浏览器选择语言。",
   selectionStrategy: "账户选择策略",

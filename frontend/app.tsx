@@ -1355,36 +1355,6 @@ function SettingsPage({
           </label>
         </div>
       </Panel>
-      <Panel title={t("projectInfo")} subtitle={t("projectInfoHelp")}>
-        <div class="settings">
-          <label>
-            <span>
-              <strong>{t("projectVersion")}</strong>
-              <small>{appInfo.version || t("unknown")}</small>
-            </span>
-          </label>
-          <label>
-            <span>
-              <strong>{t("projectAuthor")}</strong>
-              <small>{appInfo.author || t("unknown")}</small>
-            </span>
-          </label>
-          <label>
-            <span>
-              <strong>{t("projectRepository")}</strong>
-              <small>
-                {appInfo.repository ? (
-                  <a href={appInfo.repository} target="_blank" rel="noreferrer">
-                    {appInfo.repository}
-                  </a>
-                ) : (
-                  t("unknown")
-                )}
-              </small>
-            </span>
-          </label>
-        </div>
-      </Panel>
       <Panel title={t("runtimeSettings")} subtitle={t("settingsPersist")}>
         <div class="settings">
           <label>
@@ -1449,6 +1419,61 @@ function SettingsPage({
               />
             </label>
           ))}
+        </div>
+      </Panel>
+      <Panel
+        title={t("projectInfo")}
+        subtitle={t("projectInfoHelp")}
+        class="compact-panel"
+      >
+        <div class="settings compact-settings">
+          <label>
+            <span>
+              <strong>{t("projectVersion")}</strong>
+              <small>{appInfo.version || t("unknown")}</small>
+            </span>
+          </label>
+          <label>
+            <span>
+              <strong>{t("projectAuthor")}</strong>
+              <small>{appInfo.author || t("unknown")}</small>
+            </span>
+          </label>
+          <label>
+            <span>
+              <strong>{t("projectRepository")}</strong>
+              <small>
+                {appInfo.repository ? (
+                  <a href={appInfo.repository} target="_blank" rel="noreferrer">
+                    {appInfo.repository}
+                  </a>
+                ) : (
+                  t("unknown")
+                )}
+              </small>
+            </span>
+          </label>
+          <div class="project-images">
+            {[
+              [
+                "projectDonationQr",
+                "https://st2.ai55.cc/mywechat/DonationQRCode.png",
+              ],
+              [
+                "projectWechat",
+                "https://st2.ai55.cc/mywechat/WeChatIDCode.png",
+              ],
+              [
+                "projectOfficialAccount",
+                "https://st2.ai55.cc/mywechat/WeChatOfficialAccount.jpg",
+              ],
+            ].map(([label, src]) => (
+              <details class="project-image" key={label} open>
+                <summary>{t(label as TranslationKey)}</summary>
+                <img src={src} alt={t(label as TranslationKey)} loading="lazy" />
+              </details>
+            ))}
+          </div>
         </div>
       </Panel>
     </>
