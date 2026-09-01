@@ -844,21 +844,6 @@ textarea:focus-visible {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
-.copy-code {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-.copy-code:hover {
-  color: var(--brand-text);
-  text-decoration: underline;
-}
 .badges {
   display: flex;
   flex-wrap: wrap;

@@ -889,13 +889,6 @@ function Models({
                       <div>
                         <div>
                           <h3>{model.name || model.id}</h3>
-                          <button
-                            type="button"
-                            class="copy-code"
-                            onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
-                          >
-                            {model.id}
-                          </button>
                         </div>
                       </div>
                       <div class="badges">
