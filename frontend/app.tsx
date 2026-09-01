@@ -227,7 +227,12 @@ function App({
   };
   const logout = async () => {
     await api("/admin/api/session", { method: "DELETE" }).catch(() => {});
-    location.reload();
+    setAccounts([]);
+    setKeys([]);
+    setModels(null);
+    setStats(null);
+    setSettings(null);
+    setAuthenticated(false);
   };
   if (authenticated === null)
     return <div class="loading">{t("loadingPool")}</div>;
@@ -541,10 +546,8 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                     </span>
                     <div>
                       <h3>{account.name}</h3>
-                      <p class="masked-identity">
-                        <span>
-                          {isRevealed ? identity : maskIdentity(identity)}
-                        </span>
+                      <p class="masked-identity identity-line">
+                        <span>{isRevealed ? identity : maskIdentity(identity)}</span>
                         <Button
                           class="identity-toggle"
                           aria-label={t(
@@ -560,10 +563,12 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                             })
                           }
                         >
-                          {t(isRevealed ? "hide" : "reveal")}
+                          <Icon name={isRevealed ? "eyeOff" : "eye"} />
                         </Button>
                       </p>
-                      <small>{account.accountId}</small>
+                      <small class="identity-line">
+                        <span>{isRevealed ? account.accountId : maskIdentity(account.accountId)}</span>
+                      </small>
                       {account.usage && !account.usage.error && (
                         <small class="usage-snapshot">
                           {t("quotaCaptured", {

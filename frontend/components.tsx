@@ -13,7 +13,11 @@ export type IconName =
   | View
   | "logout"
   | "cloud"
-  | "close";
+  | "close"
+  | "collapse"
+  | "expand"
+  | "eye"
+  | "eyeOff";
 
 const nav: Array<{ id: View; label: TranslationKey; icon: IconName }> = [
   { id: "home", label: "navHome", icon: "home" },
@@ -53,6 +57,15 @@ const iconPaths: Record<IconName, ComponentChildren> = {
     <path d="M6.5 18.5h11a4 4 0 0 0 .4-8 6 6 0 0 0-11.5-1.2 4.6 4.6 0 0 0 .1 9.2z" />
   ),
   close: <path d="m6 6 12 12M18 6 6 18" />,
+  collapse: <path d="M4 6h16M4 12h16M4 18h16m10-9-3 3 3 3" />,
+  expand: <path d="M4 6h16M4 12h16M4 18h16m-6-9 3 3-3 3" />,
+  eye: (
+    <>
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  eyeOff: <path d="m3 3 18 18M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.8M8.5 5.8A10.5 10.5 0 0 1 12 5c6 0 9.5 7 9.5 7a17.8 17.8 0 0 1-3.2 4.1M6.6 6.9C3.9 8.8 2.5 12 2.5 12s3.5 7 9.5 7c1.3 0 2.4-.2 3.5-.7" />,
 };
 
 export function Icon({ name }: { name: IconName }) {
@@ -113,10 +126,9 @@ export function AppShell({
           aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
           onClick={() => setCollapsed(!collapsed)}
         >
-          <Icon name={collapsed ? "home" : "close"} />
+          <Icon name={collapsed ? "expand" : "collapse"} />
         </button>
         <nav aria-label={t("mainNavigation")}>
-          <span class="nav-label">{t("management")}</span>
           {nav.map(({ id, label, icon }) => (
             <a
               href={`#${id}`}
