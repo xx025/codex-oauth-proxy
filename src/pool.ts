@@ -14,6 +14,9 @@ export interface AccountRecord {
   failureCount: number;
   lastStatus?: number;
   usage?: AccountUsage;
+  lastResetAt?: number;
+  resetCount?: number;
+  lastResetStatus?: AccountResetStatus;
 }
 
 export interface AccountMetadata {
@@ -30,7 +33,17 @@ export interface AccountMetadata {
   failureCount: number;
   lastStatus?: number;
   usage?: AccountUsage;
+  lastResetAt?: number;
+  resetCount?: number;
+  lastResetStatus?: AccountResetStatus;
 }
+
+export type AccountResetStatus =
+  | "reset"
+  | "nothingToReset"
+  | "noCredit"
+  | "alreadyRedeemed"
+  | "failed";
 
 export interface UsageWindow {
   usedPercent: number;
@@ -67,6 +80,7 @@ export interface PoolSettings {
   rateLimitCooldownSeconds: number;
   authCooldownSeconds: number;
   serverErrorCooldownSeconds: number;
+  autoResetExhaustedAccounts: boolean;
 }
 
 export const DEFAULT_POOL_SETTINGS: PoolSettings = {
@@ -76,6 +90,7 @@ export const DEFAULT_POOL_SETTINGS: PoolSettings = {
   rateLimitCooldownSeconds: 60,
   authCooldownSeconds: 300,
   serverErrorCooldownSeconds: 15,
+  autoResetExhaustedAccounts: false,
 };
 
 export interface TokenUsage {
@@ -122,6 +137,7 @@ export interface RequestStatsSnapshot {
 }
 
 const REQUEST_RECORD_LIMIT = 200;
+const RESET_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
 export interface ProxyKeyRecord {
   id: string;
@@ -161,6 +177,8 @@ export interface TokenIdentity {
 
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const RESET_CREDIT_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 const OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 export class PoolError extends Error {
@@ -236,6 +254,11 @@ export class AccountPoolCore {
         5,
         300,
         "server-error cooldown",
+      ),
+      autoResetExhaustedAccounts: booleanValue(
+        patch.autoResetExhaustedAccounts,
+        previous.autoResetExhaustedAccounts,
+        "automatic quota reset",
       ),
     };
     await this.storage.put(current);
@@ -314,16 +337,7 @@ export class AccountPoolCore {
       state.accounts.map(async (account) => {
         if (!account.enabled) return;
         try {
-          await this.refreshIfNeeded(account, settings);
-          let response = await this.fetchUsage(account);
-          if (response.status === 401 || response.status === 403) {
-            account.expiresAt = 0;
-            await this.refreshIfNeeded(account, settings);
-            response = await this.fetchUsage(account);
-          }
-          if (!response.ok)
-            throw new Error(`Usage endpoint returned HTTP ${response.status}`);
-          account.usage = parseUsage(await response.json(), this.now());
+          await this.refreshUsageForAccount(account, settings);
         } catch (error) {
           account.usage = {
             ...account.usage,
@@ -417,6 +431,20 @@ export class AccountPoolCore {
     await this.storage.put(state);
   }
 
+  async reset(id: string): Promise<AccountMetadata> {
+    const state = await this.load();
+    const settings = settingsFor(state);
+    const account = requiredAccount(state, id);
+    try {
+      await this.resetAccount(account, settings);
+    } catch (error) {
+      await this.storage.put(state);
+      throw error;
+    }
+    await this.storage.put(state);
+    return redactAccount(account);
+  }
+
   async select(excluded: string[] = []): Promise<AccountRecord> {
     const state = await this.load();
     const settings = settingsFor(state);
@@ -447,6 +475,13 @@ export class AccountPoolCore {
         continue;
       try {
         await this.refreshIfNeeded(account, settings);
+        if (
+          settings.autoResetExhaustedAccounts &&
+          quotaExhausted(account.usage, now) &&
+          shouldAttemptAutoReset(account, now)
+        ) {
+          await this.resetAccount(account, settings, false);
+        }
       } catch {
         account.failureCount += 1;
         account.cooldownUntil =
@@ -455,6 +490,8 @@ export class AccountPoolCore {
         account.updatedAt = now;
         continue;
       }
+      if (settings.autoResetExhaustedAccounts && quotaExhausted(account.usage, now))
+        continue;
       state.cursor = (index + 1) % state.accounts.length;
       await this.storage.put(state);
       return { ...account };
@@ -490,13 +527,21 @@ export class AccountPoolCore {
       account.failureCount = 0;
       account.cooldownUntil = 0;
     } else if (status === 429) {
-      account.failureCount += 1;
-      account.cooldownUntil =
-        now +
-        cooldownFor(
-          account.failureCount,
-          retryAfterSeconds ?? settings.rateLimitCooldownSeconds,
-        );
+      if (
+        settings.autoResetExhaustedAccounts &&
+        quotaExhausted(account.usage, now) &&
+        shouldAttemptAutoReset(account, now)
+      ) {
+        await this.resetAccount(account, settings, false);
+      } else {
+        account.failureCount += 1;
+        account.cooldownUntil =
+          now +
+          cooldownFor(
+            account.failureCount,
+            retryAfterSeconds ?? settings.rateLimitCooldownSeconds,
+          );
+      }
     } else if (status === 401 || status === 403) {
       account.failureCount += 1;
       account.cooldownUntil =
@@ -633,6 +678,86 @@ export class AccountPoolCore {
     account.updatedAt = this.now();
     account.failureCount = 0;
     account.cooldownUntil = 0;
+  }
+
+  private async resetAccount(
+    account: AccountRecord,
+    settings: PoolSettings,
+    throwOnFailure = true,
+  ): Promise<void> {
+    try {
+      await this.refreshIfNeeded(account, settings);
+      const response = await this.oauthFetch(RESET_CREDIT_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: `Bearer ${account.accessToken}`,
+          "chatgpt-account-id": account.accountId,
+        },
+        body: JSON.stringify({ redeem_request_id: crypto.randomUUID() }),
+      });
+      if (!response.ok) throw new Error(`Reset endpoint returned HTTP ${response.status}`);
+      const outcome = resetOutcome(await response.json());
+      const now = this.now();
+      account.lastResetAt = now;
+      account.lastResetStatus = outcome;
+      if (outcome === "reset" || outcome === "alreadyRedeemed") {
+        account.resetCount = (account.resetCount ?? 0) + 1;
+        account.failureCount = 0;
+        account.cooldownUntil = 0;
+        delete account.lastStatus;
+        try {
+          await this.refreshUsageForAccount(account, settings);
+        } catch (error) {
+          account.usage = {
+            ...account.usage,
+            capturedAt: this.now(),
+            error: safeUsageError(error),
+          };
+        }
+      } else if (outcome === "nothingToReset") {
+        account.cooldownUntil = 0;
+      } else {
+        account.failureCount += 1;
+        account.cooldownUntil =
+          now + cooldownFor(account.failureCount, settings.rateLimitCooldownSeconds);
+        account.updatedAt = now;
+        if (throwOnFailure) throw new PoolError(409, resetOutcomeMessage(outcome));
+        return;
+      }
+      account.updatedAt = this.now();
+    } catch (error) {
+      if (error instanceof PoolError) {
+        if (!throwOnFailure) return;
+        throw error;
+      }
+      const now = this.now();
+      account.lastResetAt = now;
+      account.lastResetStatus = "failed";
+      account.failureCount += 1;
+      account.cooldownUntil =
+        now + cooldownFor(account.failureCount, settings.rateLimitCooldownSeconds);
+      account.updatedAt = now;
+      if (!throwOnFailure) return;
+      throw new PoolError(502, safeResetError(error));
+    }
+  }
+
+  private async refreshUsageForAccount(
+    account: AccountRecord,
+    settings: PoolSettings,
+  ): Promise<void> {
+    await this.refreshIfNeeded(account, settings);
+    let response = await this.fetchUsage(account);
+    if (response.status === 401 || response.status === 403) {
+      account.expiresAt = 0;
+      await this.refreshIfNeeded(account, settings);
+      response = await this.fetchUsage(account);
+    }
+    if (!response.ok)
+      throw new Error(`Usage endpoint returned HTTP ${response.status}`);
+    account.usage = parseUsage(await response.json(), this.now());
   }
 
   private fetchUsage(account: AccountRecord): Promise<Response> {
@@ -831,6 +956,12 @@ function boundedInteger(
   return parsed;
 }
 
+function booleanValue(value: unknown, fallback: boolean, label: string): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value === "boolean") return value;
+  throw new PoolError(400, `Invalid ${label}`);
+}
+
 function emptyRequestTotals(): Omit<
   ModelRequestStats,
   "model" | "lastRequestedAt"
@@ -983,6 +1114,47 @@ function safeUsageError(error: unknown): string {
   return /^Usage endpoint returned HTTP \d{3}$/.test(message)
     ? message
     : "Usage refresh failed";
+}
+
+function safeResetError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Quota reset failed";
+  return /^Reset endpoint returned HTTP \d{3}$/.test(message)
+    ? message
+    : "Quota reset failed";
+}
+
+function resetOutcome(input: unknown): AccountResetStatus {
+  const outcome = stringValue(objectValue(input)?.outcome);
+  if (
+    outcome === "reset" ||
+    outcome === "nothingToReset" ||
+    outcome === "noCredit" ||
+    outcome === "alreadyRedeemed"
+  ) {
+    return outcome;
+  }
+  throw new Error("Reset endpoint returned an incomplete response");
+}
+
+function resetOutcomeMessage(outcome: AccountResetStatus): string {
+  if (outcome === "nothingToReset") return "No current quota window can be reset";
+  if (outcome === "noCredit") return "No quota reset credits are available";
+  return "Quota reset failed";
+}
+
+function quotaExhausted(usage: AccountUsage | undefined, now: number): boolean {
+  return Boolean(
+    windowExhausted(usage?.primary, now) || windowExhausted(usage?.secondary, now),
+  );
+}
+
+function windowExhausted(window: UsageWindow | undefined, now: number): boolean {
+  if (!window || window.resetsAt * 1000 <= now) return false;
+  return window.remainingPercent <= 0 || window.usedPercent >= 100;
+}
+
+function shouldAttemptAutoReset(account: AccountRecord, now: number): boolean {
+  return !account.lastResetAt || now - account.lastResetAt >= RESET_RETRY_COOLDOWN_MS;
 }
 
 function jwtExpiry(token: string): number {

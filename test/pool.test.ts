@@ -47,14 +47,19 @@ describe("AccountPoolCore", () => {
       rateLimitCooldownSeconds: 90,
       authCooldownSeconds: 600,
       serverErrorCooldownSeconds: 25,
+      autoResetExhaustedAccounts: true,
     });
     expect(settings).toMatchObject({
       selectionStrategy: "least_failures",
       maxAccountAttempts: 5,
+      autoResetExhaustedAccounts: true,
     });
     expect(await new AccountPoolCore(storage).getSettings()).toEqual(settings);
     await expect(
       pool.updateSettings({ maxAccountAttempts: 11 }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      pool.updateSettings({ autoResetExhaustedAccounts: "yes" }),
     ).rejects.toMatchObject({ status: 400 });
   });
 
@@ -335,6 +340,145 @@ describe("AccountPoolCore", () => {
     expect(storage.value?.accounts[0].usage?.primary?.remainingPercent).toBe(
       75,
     );
+  });
+
+  it("resets quota with a reset credit and refreshes usage", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          rate_limit: {
+            primary_window: {
+              used_percent: 5,
+              limit_window_seconds: 18_000,
+              reset_at: 4_000,
+            },
+          },
+        }),
+      );
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    const imported = await pool.importAccount(credential("a", "Primary"));
+
+    const account = await pool.reset(imported.id);
+
+    expect(oauthFetch).toHaveBeenNthCalledWith(
+      1,
+      "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const resetHeaders = new Headers(oauthFetch.mock.calls[0][1]?.headers);
+    expect(resetHeaders.get("authorization")).toBe("Bearer access-a");
+    expect(resetHeaders.get("chatgpt-account-id")).toBe("a");
+    expect(JSON.parse(String(oauthFetch.mock.calls[0][1]?.body))).toMatchObject({
+      redeem_request_id: expect.any(String),
+    });
+    expect(account).toMatchObject({
+      lastResetAt: 2_000,
+      lastResetStatus: "reset",
+      resetCount: 1,
+      failureCount: 0,
+      cooldownUntil: 0,
+      usage: { primary: { remainingPercent: 95 } },
+    });
+    expect(account).not.toHaveProperty("accessToken");
+    expect(account).not.toHaveProperty("refreshToken");
+  });
+
+  it("rejects manual reset when no reset credit is available", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi.fn(async () => Response.json({ outcome: "noCredit" }));
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    const imported = await pool.importAccount(credential("a"));
+
+    await expect(pool.reset(imported.id)).rejects.toMatchObject({ status: 409 });
+    expect(storage.value?.accounts[0]).toMatchObject({
+      lastResetAt: 2_000,
+      lastResetStatus: "noCredit",
+      failureCount: 1,
+      cooldownUntil: 62_000,
+    });
+  });
+
+  it("auto-resets exhausted accounts when enabled", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(
+        Response.json({
+          rate_limit: {
+            primary_window: {
+              used_percent: 10,
+              limit_window_seconds: 18_000,
+              reset_at: 4_000,
+            },
+          },
+        }),
+      );
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    await pool.updateSettings({ autoResetExhaustedAccounts: true });
+    const imported = await pool.importAccount(credential("a"));
+    storage.value!.accounts[0].usage = {
+      capturedAt: 1_000,
+      primary: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        windowSeconds: 18_000,
+        windowMinutes: 300,
+        resetsAt: 4_000,
+      },
+    };
+
+    const selected = await pool.select();
+
+    expect(selected.id).toBe(imported.id);
+    expect(selected.usage?.primary?.remainingPercent).toBe(90);
+    expect(oauthFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not repeatedly auto-reset after an exhausted reset attempt", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi.fn(async () => Response.json({ outcome: "noCredit" }));
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    await pool.updateSettings({ autoResetExhaustedAccounts: true });
+    await pool.importAccount(credential("a"));
+    storage.value!.accounts[0].usage = {
+      capturedAt: 1_000,
+      primary: {
+        usedPercent: 100,
+        remainingPercent: 0,
+        windowSeconds: 18_000,
+        windowMinutes: 300,
+        resetsAt: 4_000,
+      },
+    };
+
+    await expect(pool.select()).rejects.toMatchObject({ status: 503 });
+    await expect(pool.select()).rejects.toMatchObject({ status: 503 });
+
+    expect(oauthFetch).toHaveBeenCalledTimes(1);
+    expect(storage.value?.accounts[0]).toMatchObject({
+      lastResetStatus: "noCredit",
+      cooldownUntil: 62_000,
+    });
   });
 
   it("cools down rate-limited accounts and fails over", async () => {

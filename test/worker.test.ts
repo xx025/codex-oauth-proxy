@@ -41,6 +41,7 @@ function environment(options: {
     rateLimitCooldownSeconds: number;
     authCooldownSeconds: number;
     serverErrorCooldownSeconds: number;
+    autoResetExhaustedAccounts: boolean;
   }>;
 }) {
   const accountIds = options.accountIds ?? ["a"];
@@ -101,6 +102,7 @@ function environment(options: {
         rateLimitCooldownSeconds: 60,
         authCooldownSeconds: 300,
         serverErrorCooldownSeconds: 15,
+        autoResetExhaustedAccounts: false,
         ...options.settings,
       } });
       if (url.pathname === "/accounts") return Response.json({ accounts: [{ id: "a", name: "A", accountId: "upstream-a" }] });
@@ -239,7 +241,9 @@ describe("edge worker", () => {
   it("renders quota refresh and live model catalog controls", () => {
     const source = ADMIN_ASSETS["/admin/assets/app.js"].body;
     expect(source).toContain("/admin/api/accounts/usage");
-    expect(source).toContain("刷新额度");
+    expect(source).toContain("/reset");
+    expect(source).toContain("重置额度");
+    expect(source).toContain("autoResetExhaustedAccounts");
     expect(source).toContain("/admin/api/models");
     expect(source).toContain("可用模型");
     expect(source).toContain("Workspace");

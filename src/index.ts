@@ -167,6 +167,10 @@ export class AccountPool extends DurableObject<Env> {
         await this.ctx.storage.delete(this.deviceLoginKey(deviceMatch[1]));
         return json({ ok: true });
       }
+      const resetMatch = url.pathname.match(/^\/accounts\/([^/]+)\/reset$/);
+      if (resetMatch && request.method === "POST") {
+        return json({ account: await this.core.reset(resetMatch[1]) });
+      }
       const match = url.pathname.match(/^\/accounts\/([^/]+)$/);
       if (match && request.method === "PATCH") {
         const patch = await request.json() as { name?: string; enabled?: boolean };

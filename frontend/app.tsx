@@ -51,6 +51,9 @@ type Account = {
   cooldownUntil: number;
   failureCount: number;
   lastStatus?: number;
+  lastResetAt?: number;
+  resetCount?: number;
+  lastResetStatus?: string;
   usage?: {
     primary?: UsageWindow;
     secondary?: UsageWindow;
@@ -74,6 +77,7 @@ type Settings = {
   rateLimitCooldownSeconds: number;
   authCooldownSeconds: number;
   serverErrorCooldownSeconds: number;
+  autoResetExhaustedAccounts: boolean;
 };
 type Model = ModelMetadata;
 type Stats = {
@@ -463,6 +467,21 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
       notify(t("operationFailed"), message(error, t("requestFailed")), true);
     }
   };
+  const reset = async (account: Account) => {
+    if (!confirm(t("resetAccountConfirm", { name: account.name }))) return;
+    try {
+      const data = await api<{ account: Account }>(
+        `/admin/api/accounts/${encodeURIComponent(account.id)}/reset`,
+        { method: "POST", body: "{}" },
+      );
+      setAccounts(
+        accounts.map((a: Account) => (a.id === account.id ? data.account : a)),
+      );
+      notify(t("resetSucceeded"), t("resetSucceededText"));
+    } catch (error) {
+      notify(t("resetFailed"), message(error, t("requestFailed")), true);
+    }
+  };
   const remove = async (account: Account) => {
     if (!confirm(t("deleteAccountConfirm", { name: account.name }))) return;
     try {
@@ -572,8 +591,19 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                         ? ` · HTTP ${account.lastStatus}`
                         : ""}
                     </small>
+                    {account.lastResetAt && (
+                      <small>
+                        {t("lastReset", {
+                          date: formatDate(locale, account.lastResetAt),
+                          status: t(resetStatusKey(account.lastResetStatus)),
+                        })}
+                      </small>
+                    )}
                   </div>
                   <div class="row-actions">
+                    <Button onClick={() => reset(account)}>
+                      {t("resetQuota")}
+                    </Button>
                     <Button onClick={() => toggle(account)}>
                       {account.enabled ? t("disable") : t("enable")}
                     </Button>
@@ -1145,8 +1175,12 @@ function Table({ headers, rows }: { headers: string[]; rows: any[][] }) {
   );
 }
 
+type NumericSettingKey = Exclude<
+  keyof Settings,
+  "selectionStrategy" | "autoResetExhaustedAccounts"
+>;
 const settingRows: Array<
-  [keyof Settings, TranslationKey, TranslationKey, number, number]
+  [NumericSettingKey, TranslationKey, TranslationKey, number, number]
 > = [
   ["maxAccountAttempts", "maxAttempts", "maxAttemptsHelp", 1, 10],
   ["tokenExpiryBufferMinutes", "tokenRefresh", "tokenRefreshHelp", 5, 120],
@@ -1180,7 +1214,7 @@ function SettingsPage({
   const { t } = useI18n();
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
-  const update = (key: keyof Settings, value: string | number) =>
+  const update = (key: keyof Settings, value: string | number | boolean) =>
     setDraft({ ...draft, [key]: value });
   const save = async () => {
     try {
@@ -1261,6 +1295,19 @@ function SettingsPage({
               <option value="round_robin">{t("strategyRoundRobin")}</option>
               <option value="least_failures">{t("strategyHealthy")}</option>
             </select>
+          </label>
+          <label>
+            <span>
+              <strong>{t("autoResetExhausted")}</strong>
+              <small>{t("autoResetExhaustedHelp")}</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={draft.autoResetExhaustedAccounts}
+              onChange={(e) =>
+                update("autoResetExhaustedAccounts", e.currentTarget.checked)
+              }
+            />
           </label>
           {settingRows.map(([key, title, text, min, max]) => (
             <label>
@@ -1578,6 +1625,20 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
 
 const message = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+const resetStatusKey = (status: string | undefined): TranslationKey => {
+  switch (status) {
+    case "reset":
+      return "resetStatusreset";
+    case "nothingToReset":
+      return "resetStatusnothingToReset";
+    case "noCredit":
+      return "resetStatusnoCredit";
+    case "alreadyRedeemed":
+      return "resetStatusalreadyRedeemed";
+    default:
+      return "resetStatusfailed";
+  }
+};
 const tokenLimit = (
   locale: "zh-CN" | "en",
   value: number | undefined,

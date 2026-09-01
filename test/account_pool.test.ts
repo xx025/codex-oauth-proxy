@@ -62,12 +62,61 @@ describe("AccountPool device routes", () => {
     } as never);
     const update = await object.fetch(new Request("https://pool/settings", {
       method: "PATCH",
-      body: JSON.stringify({ selectionStrategy: "least_failures", maxAccountAttempts: 4 }),
+      body: JSON.stringify({ selectionStrategy: "least_failures", maxAccountAttempts: 4, autoResetExhaustedAccounts: true }),
     }));
     expect(update.status).toBe(200);
-    expect(await update.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4 } });
+    expect(await update.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4, autoResetExhaustedAccounts: true } });
     const read = await object.fetch(new Request("https://pool/settings"));
-    expect(await read.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4 } });
+    expect(await read.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4, autoResetExhaustedAccounts: true } });
+  });
+
+  it("resets account quota through Durable Object routes", async () => {
+    const { state } = durableState();
+    const upstream = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(Response.json({
+        rate_limit: {
+          primary_window: {
+            used_percent: 1,
+            limit_window_seconds: 18_000,
+            reset_at: 4_000,
+          },
+        },
+      }));
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: upstream },
+    } as never);
+    const created = await object.fetch(new Request("https://pool/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expiresAt: 10_000_000,
+        accountId: "workspace",
+        principalId: "user",
+      }),
+    }));
+    const { account: imported } = await created.json() as { account: { id: string } };
+
+    const reset = await object.fetch(new Request(`https://pool/accounts/${imported.id}/reset`, {
+      method: "POST",
+      body: "{}",
+    }));
+
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toMatchObject({
+      account: {
+        id: imported.id,
+        lastResetStatus: "reset",
+        resetCount: 1,
+        usage: { primary: { remainingPercent: 99 } },
+      },
+    });
+    expect((upstream.mock.calls[0][0] as Request).url).toBe(
+      "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+    );
   });
 
   it("persists a device login server-side, imports tokens, then removes the session", async () => {
