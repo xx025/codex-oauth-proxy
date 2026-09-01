@@ -30,6 +30,7 @@ import {
   formatUntilReset,
   groupModels,
   maskIdentity,
+  modelVariantId,
   type ModelMetadata,
 } from "./helpers";
 import "./styles.css";
@@ -962,9 +963,9 @@ function Models({
                         {model.reasoning_efforts.map((effort) => (
                           <button
                             type="button"
-                            onClick={() => copyText(`${model.id}-${effort}`, notify, t, "modelReasoningCopied")}
+                            onClick={() => copyText(modelVariantId(model, effort), notify, t, "modelReasoningCopied")}
                           >
-                            -{effort}
+                            {modelVariantId(model, effort)}
                           </button>
                         ))}
                         </div>

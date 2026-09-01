@@ -143,6 +143,10 @@ export function groupModels(models: ModelMetadata[]): ModelGroup[] {
     }));
 }
 
+export function modelVariantId(model: Pick<ModelMetadata, "id" | "base_model">, effort: string): string {
+  return `${model.base_model || model.id}-${effort}`;
+}
+
 function inferModelFamily(model: ModelMetadata): ModelFamily {
   const value =
     `${model.family || ""} ${model.category || ""} ${model.base_model || ""} ${model.id}`.toLowerCase();

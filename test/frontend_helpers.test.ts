@@ -13,6 +13,7 @@ import {
   formatUntilReset,
   groupModels,
   maskIdentity,
+  modelVariantId,
 } from "../frontend/helpers";
 
 describe("frontend i18n helpers", () => {
@@ -86,6 +87,22 @@ describe("frontend model grouping", () => {
       { family: "reasoning", models: [{ id: "o3" }] },
       { family: "other", models: [{ id: "future" }] },
     ]);
+  });
+
+  it("keeps the base model with its reasoning variants", () => {
+    const [gptGroup] = groupModels([
+      { id: "gpt-5.4", base_model: "gpt-5.4" },
+      {
+        id: "gpt-5.4-high",
+        base_model: "gpt-5.4",
+        reasoning_effort: "high",
+      },
+    ]);
+    expect(gptGroup).toMatchObject({
+      family: "gpt",
+      models: [{ id: "gpt-5.4", reasoning_efforts: ["high"] }],
+    });
+    expect(modelVariantId(gptGroup.models[0], "high")).toBe("gpt-5.4-high");
   });
 });
 

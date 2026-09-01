@@ -477,7 +477,7 @@ function normalizeResponsesInput(body: JsonObject): void {
 
 function applyServiceTier(body: JsonObject, serviceTier: ProxyRequestOptions["serviceTier"]): void {
   delete body.service_tier;
-  if (serviceTier === "fast") body.service_tier = "fast";
+  void serviceTier;
 }
 
 function normalizeModel(input: string): string {
