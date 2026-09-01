@@ -288,7 +288,7 @@ function App({
           />
         )}
         {view === "models" && (
-          <Models models={models} refresh={() => loadModels(true)} />
+          <Models models={models} refresh={() => loadModels(true)} notify={notify} />
         )}
         {view === "usage" && <Usage stats={stats} refresh={refreshStats} />}
         {view === "settings" && settings && (
@@ -741,6 +741,8 @@ function Keys({ keys, setKeys, open, notify }: any) {
       notify(t("keyRenameFailed"), message(error, t("requestFailed")), true);
     }
   };
+  const copyApiUrl = () =>
+    copyText(`${location.origin}/v1`, notify, t, "apiUrlCopied");
   return (
     <>
       <PageHeader
@@ -779,6 +781,7 @@ function Keys({ keys, setKeys, open, notify }: any) {
                     : t("createdBeforeUpgrade")}
                 </span>
                 <div class="row-actions">
+                  <Button onClick={copyApiUrl}>{t("copyApiUrl")}</Button>
                   {!key.revokedAt && (
                     <Button onClick={() => rename(key)}>
                       {t("rename")}
@@ -829,9 +832,11 @@ function Keys({ keys, setKeys, open, notify }: any) {
 function Models({
   models,
   refresh,
+  notify,
 }: {
   models: Model[] | null;
   refresh: () => void;
+  notify: (title: string, text: string, error?: boolean) => void;
 }) {
   const { locale, t } = useI18n();
   const groups = groupModels(models || []);
@@ -876,7 +881,13 @@ function Models({
                           <h3>{model.name || model.id}</h3>
                           <code>{model.id}</code>
                         </div>
-                        <span class="status healthy">{t("available")}</span>
+                        <Button
+                          class="icon-button"
+                          aria-label={t("copyModelName", { name: model.id })}
+                          onClick={() => copyText(model.id, notify, t, "modelNameCopied")}
+                        >
+                          {t("copy")}
+                        </Button>
                       </div>
                       <div class="badges">
                         <span>
@@ -1670,6 +1681,19 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
 
 const message = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+const copyText = async (
+  value: string,
+  notify: (title: string, text: string, error?: boolean) => void,
+  t: (key: TranslationKey, values?: Record<string, string | number>) => string,
+  successKey: TranslationKey,
+) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    notify(t(successKey), value);
+  } catch (error) {
+    notify(t("copyFailed"), message(error, t("requestFailed")), true);
+  }
+};
 const resetStatusKey = (status: string | undefined): TranslationKey => {
   switch (status) {
     case "reset":
