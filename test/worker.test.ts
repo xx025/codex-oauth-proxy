@@ -149,21 +149,17 @@ function environment(options: {
 }
 
 describe("edge worker", () => {
-  it("boots Access from the root and returns the UI to the root path", async () => {
+  it("serves the admin UI at the root without a cookie bootstrap loop", async () => {
     const { env } = environment({ upstream: async () => new Response("unused") });
-    const first = await worker.fetch(new Request("https://example.test/"), env as never, context().ctx);
-    expect(first.status).toBe(302);
-    expect(first.headers.get("location")).toBe("/admin?return=%2F");
+    const root = await worker.fetch(new Request("https://example.test/"), env as never, context().ctx);
+    expect(root.status).toBe(200);
+    expect(root.headers.get("set-cookie")).toBeNull();
 
     const callback = await worker.fetch(new Request("https://example.test/admin?return=%2F"), env as never, context().ctx);
     expect(callback.status).toBe(302);
     expect(callback.headers.get("location")).toBe("/");
-    expect(callback.headers.get("set-cookie")).toContain("codex_ui=1");
+    expect(callback.headers.get("set-cookie")).toBeNull();
 
-    const root = await worker.fetch(new Request("https://example.test/", {
-      headers: { cookie: "codex_ui=1" },
-    }), env as never, context().ctx);
-    expect(root.status).toBe(200);
     const html = await root.text();
     expect(html).toContain('<div id="app">');
     expect(html).toContain('/admin/assets/app.js');

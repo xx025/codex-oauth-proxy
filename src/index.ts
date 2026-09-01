@@ -25,7 +25,6 @@ interface Env {
 }
 
 const SESSION_COOKIE = "codex_admin";
-const UI_COOKIE = "codex_ui";
 const SESSION_MAX_AGE = 8 * 60 * 60;
 const MODEL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MODEL_CATALOG_CACHE_KEY = "model-catalog-cache";
@@ -285,12 +284,10 @@ export const worker = {
         return new Response(adminAsset.body, { headers });
       }
       if (url.pathname === "/" && request.method === "GET") {
-        const hasUiCookie = parseCookies(request.headers.get("cookie") || "")[UI_COOKIE] === "1";
-        if (!hasUiCookie) return redirect("/admin?return=%2F");
         return new Response(ADMIN_HTML, { headers: secureHeaders("text/html; charset=utf-8") });
       }
       if ((url.pathname === "/admin" || url.pathname === "/admin/") && request.method === "GET") {
-        return redirect("/", `${UI_COOKIE}=1; Secure; SameSite=Strict; Path=/; Max-Age=31536000`);
+        return redirect("/");
       }
       if (url.pathname.startsWith("/admin/api/")) {
         return await handleAdmin(request, env);
