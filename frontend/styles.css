@@ -630,6 +630,12 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 10px;
 }
+.quota-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
 .quota strong {
   font-size: 12px;
 }
@@ -637,6 +643,11 @@ textarea:focus-visible {
   display: block;
   color: var(--muted);
   font-size: 11px;
+}
+.quota-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .quota-track {
   height: 4px;

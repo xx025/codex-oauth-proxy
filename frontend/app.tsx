@@ -676,22 +676,18 @@ function Quota({
   const windowSeconds = window.windowSeconds ?? window.windowMinutes * 60;
   return (
     <div class="quota">
-      <small>{label}</small>
-      <strong>
-        {t("quotaRemaining", { percent: formatPercent(locale, value / 100) })}
-      </strong>
-      <span>
-        {t("quotaUsed", { percent: formatPercent(locale, used / 100) })}
-      </span>
+      <div class="quota-head">
+        <small>{label}</small>
+        <strong>{formatPercent(locale, value / 100)}</strong>
+      </div>
       <div class="quota-track">
         <i style={{ width: `${value}%` }} />
       </div>
-      <span>
-        {t("quotaWindow", { duration: formatDuration(locale, windowSeconds) })}
-      </span>
-      <span>
-        {t("resetsAt", { date: formatDate(locale, window.resetsAt * 1000) })}
-        {" · "}
+      <span class="quota-meta">
+        {t("quotaUsed", { percent: formatPercent(locale, used / 100) })}
+        {" / "}
+        {t("quotaWindowShort", { duration: formatDuration(locale, windowSeconds) })}
+        {" / "}
         {t("resetsIn", { duration: formatUntilReset(locale, window.resetsAt) })}
       </span>
     </div>
