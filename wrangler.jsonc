@@ -14,14 +14,6 @@
     { "tag": "v1", "new_sqlite_classes": ["AccountPool"] },
     { "tag": "v2", "new_sqlite_classes": ["ProxyExecutor"] }
   ],
-  "vpc_networks": [
-    {
-      "binding": "NATIVE_EGRESS",
-      // Replace this with your own Cloudflare Tunnel/VPC egress ID before deploying.
-      "tunnel_id": "00000000-0000-4000-8000-000000000000",
-      "remote": true
-    }
-  ],
   "observability": {
     "enabled": true,
     "logs": {

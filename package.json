@@ -12,6 +12,9 @@
       },
       "NATIVE_EGRESS": {
         "description": "Required Cloudflare VPC Network binding. Keep the binding name as `NATIVE_EGRESS` and select your own online Tunnel/VPC egress whose public IP can reach `chatgpt.com` and `auth.openai.com`."
+      },
+      "CLOUDFLARE_TUNNEL_ID": {
+        "description": "Required for deployment scripts. Set this to your Cloudflare Tunnel/VPC egress UUID so the generated Wrangler config can bind `NATIVE_EGRESS` without editing `wrangler.jsonc`."
       }
     }
   },
@@ -20,7 +23,7 @@
   },
   "scripts": {
     "frontend:build": "node scripts/build-frontend.mjs",
-    "build": "npm run frontend:build && node scripts/wrangler-with-vpc.mjs deploy --dry-run",
+    "build": "npm run frontend:build && CLOUDFLARE_TUNNEL_ID=${CLOUDFLARE_TUNNEL_ID:-11111111-1111-4111-8111-111111111111} node scripts/wrangler-with-vpc.mjs deploy --dry-run",
     "deploy": "npm run frontend:build && node scripts/wrangler-with-vpc.mjs deploy",
     "dev": "npm run frontend:build && wrangler dev",
     "test": "vitest run",

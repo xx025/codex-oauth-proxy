@@ -4,6 +4,8 @@ English | [简体中文](README.zh-CN.md)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
 
+Click the button above to deploy in your browser. No local download or npm command is required.
+
 Use ChatGPT OAuth accounts through an OpenAI-compatible API. This project runs entirely on Cloudflare Workers and Durable Objects, with a built-in administration UI for adding accounts, creating client API keys, and viewing request statistics.
 
 It is useful when you want API clients to call `/v1/models`, `/v1/chat/completions`, `/v1/responses`, or `/mcp` while the upstream credentials are managed as ChatGPT OAuth accounts.
@@ -52,7 +54,16 @@ All upstream requests must use the `NATIVE_EGRESS` VPC binding. The Worker fails
 
 Detailed Chinese deployment steps are in [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md).
 
-Quick start:
+Recommended: click the Deploy to Cloudflare button above and finish setup in the browser. Users do not need to clone the repository, install Node.js, or run npm locally.
+
+In the Cloudflare setup page, fill two required values:
+
+- `CLOUDFLARE_TUNNEL_ID`: build variable, your Cloudflare Tunnel/VPC egress ID
+- `KEY_ENCRYPTION_SECRET`: Worker secret, a random value such as `openssl rand -hex 32`
+
+If the admin domain is not protected by Cloudflare Access, also set `ADMIN_API_KEY` as a Worker secret.
+
+Command-line deployment is also available. You do not need to edit `wrangler.jsonc`; the deploy script creates a temporary Wrangler config from `CLOUDFLARE_TUNNEL_ID`:
 
 ```bash
 npm ci

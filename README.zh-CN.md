@@ -4,6 +4,8 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/codex-oauth-proxy)
 
+点击上方按钮即可在浏览器里部署，不需要下载代码，也不需要在本地运行 npm。
+
 把 ChatGPT OAuth 账号转换成兼容 OpenAI API 的服务。项目完整运行在 Cloudflare Workers 和 Durable Objects 上，内置管理面板，可添加账号、生成客户端 API Key、查看请求统计。
 
 适合需要让客户端调用 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 或 `/mcp`，但上游凭据通过 ChatGPT OAuth 账号统一管理的场景。
@@ -52,7 +54,16 @@ OAuth Token、账号、客户端密钥、设置和统计信息保存在 Durable 
 
 完整部署步骤见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
 
-快速部署：
+推荐点击上方 Deploy to Cloudflare 按钮，在浏览器里完成部署。用户不需要克隆仓库，不需要安装 Node.js，也不需要在本地运行 npm。
+
+在 Cloudflare 部署页面里，只需要填写两个必填项：
+
+- `CLOUDFLARE_TUNNEL_ID`：构建变量，你自己的 Cloudflare Tunnel/VPC 出口 ID
+- `KEY_ENCRYPTION_SECRET`：Worker Secret，随机长字符串，例如 `openssl rand -hex 32`
+
+如果管理域名没有用 Cloudflare Access 保护，再把 `ADMIN_API_KEY` 设置为 Worker Secret。
+
+也可以使用命令行部署。无需修改 `wrangler.jsonc`，部署脚本会根据 `CLOUDFLARE_TUNNEL_ID` 生成临时 Wrangler 配置：
 
 ```bash
 npm ci
