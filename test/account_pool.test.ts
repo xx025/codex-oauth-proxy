@@ -70,6 +70,36 @@ describe("AccountPool device routes", () => {
     expect(await read.json()).toMatchObject({ settings: { selectionStrategy: "least_failures", maxAccountAttempts: 4, autoResetExhaustedAccounts: true } });
   });
 
+  it("renames accounts through Durable Object routes", async () => {
+    const { state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+    } as never);
+    const created = await object.fetch(new Request("https://pool/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Original",
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expiresAt: 10_000_000,
+        accountId: "workspace",
+        principalId: "user",
+      }),
+    }));
+    const { account: imported } = await created.json() as { account: { id: string } };
+
+    const renamed = await object.fetch(new Request(`https://pool/accounts/${imported.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed" }),
+    }));
+
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ account: { id: imported.id, name: "Renamed" } });
+    const list = await object.fetch(new Request("https://pool/accounts"));
+    expect(await list.json()).toMatchObject({ accounts: [{ id: imported.id, name: "Renamed" }] });
+  });
+
   it("resets account quota through Durable Object routes", async () => {
     const { state } = durableState();
     const upstream = vi

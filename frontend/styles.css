@@ -553,11 +553,11 @@ textarea:focus-visible {
 .account-row {
   display: grid;
   grid-template-columns:
-    minmax(190px, 1.2fr) minmax(145px, 0.8fr) minmax(145px, 0.8fr)
-    minmax(125px, 0.65fr) auto;
-  gap: 18px;
+    minmax(170px, 1.2fr) minmax(128px, 0.75fr) minmax(128px, 0.75fr)
+    minmax(105px, 0.55fr) minmax(150px, auto);
+  gap: 12px;
   align-items: center;
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   transition: background 0.12s;
 }
@@ -572,7 +572,7 @@ textarea:focus-visible {
 .identity {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
 }
 .identity > div {
@@ -581,7 +581,7 @@ textarea:focus-visible {
 .identity h3,
 .key-row h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 .identity p,
@@ -589,7 +589,7 @@ textarea:focus-visible {
 .account-row > div > small {
   display: block;
   overflow: hidden;
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   color: var(--muted);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -607,7 +607,7 @@ textarea:focus-visible {
 .identity-toggle {
   flex: 0 0 auto;
   min-width: 0;
-  height: 22px;
+  height: 20px;
   padding: 0 6px;
   font-size: 10px;
 }
@@ -618,8 +618,8 @@ textarea:focus-visible {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: var(--brand-soft);
   color: var(--brand-text);
@@ -628,10 +628,10 @@ textarea:focus-visible {
 .quota small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 .quota strong {
-  font-size: 13px;
+  font-size: 12px;
 }
 .quota > span {
   display: block;
@@ -639,8 +639,8 @@ textarea:focus-visible {
   font-size: 11px;
 }
 .quota-track {
-  height: 5px;
-  margin: 6px 0 4px;
+  height: 4px;
+  margin: 4px 0 3px;
   overflow: hidden;
   border-radius: 3px;
   background: var(--neutral-bg);
@@ -654,7 +654,7 @@ textarea:focus-visible {
 .status {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
@@ -669,8 +669,14 @@ textarea:focus-visible {
 }
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 5px;
+}
+.row-actions .button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 11px;
 }
 .key-row {
   display: grid;

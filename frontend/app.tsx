@@ -483,6 +483,22 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
       notify(t("resetFailed"), message(error, t("requestFailed")), true);
     }
   };
+  const rename = async (account: Account) => {
+    const name = prompt(t("accountRenamePrompt"), account.name)?.trim();
+    if (!name || name === account.name) return;
+    try {
+      const data = await api<{ account: Account }>(
+        `/admin/api/accounts/${encodeURIComponent(account.id)}`,
+        { method: "PATCH", body: JSON.stringify({ name }) },
+      );
+      setAccounts(
+        accounts.map((a: Account) => (a.id === account.id ? data.account : a)),
+      );
+      notify(t("accountRenamed"), t("accountRenamedText"));
+    } catch (error) {
+      notify(t("renameFailed"), message(error, t("requestFailed")), true);
+    }
+  };
   const remove = async (account: Account) => {
     if (!confirm(t("deleteAccountConfirm", { name: account.name }))) return;
     try {
@@ -549,9 +565,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                           {t(isRevealed ? "hide" : "reveal")}
                         </Button>
                       </p>
-                      <small>
-                        {t("workspace")} · {account.accountId}
-                      </small>
+                      <small>{account.accountId}</small>
                       {account.usage && !account.usage.error && (
                         <small class="usage-snapshot">
                           {t("quotaCaptured", {
@@ -587,7 +601,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                           ? t("coolingDown")
                           : t("available")}
                     </span>
-                    <small>
+                    <small class="account-health">
                       {t("failures", {
                         count: formatNumber(locale, account.failureCount),
                       })}
@@ -605,6 +619,9 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                     )}
                   </div>
                   <div class="row-actions">
+                    <Button onClick={() => rename(account)}>
+                      {t("rename")}
+                    </Button>
                     <Button onClick={() => reset(account)}>
                       {t("resetQuota")}
                     </Button>
