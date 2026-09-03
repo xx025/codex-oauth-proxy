@@ -5,28 +5,21 @@ import { spawn } from "node:child_process";
 const tunnelId = process.env.CLOUDFLARE_TUNNEL_ID || process.env.NATIVE_EGRESS_TUNNEL_ID;
 const args = process.argv.slice(2);
 const isDeploy = args[0] === "deploy" && !args.includes("--dry-run");
-const isWorkersBuild = process.env.WORKERS_CI === "1" || process.env.CI === "true";
 
 if (tunnelId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tunnelId)) {
   console.error("CLOUDFLARE_TUNNEL_ID must be a valid Cloudflare Tunnel/VPC UUID.");
   process.exit(1);
 }
 
-if (isDeploy && !tunnelId && !isWorkersBuild) {
+if (isDeploy && !tunnelId) {
   console.error("Set CLOUDFLARE_TUNNEL_ID to your Cloudflare Tunnel/VPC egress ID before deploying.");
   console.error("Example: CLOUDFLARE_TUNNEL_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx npm run deploy");
   process.exit(1);
 }
 
-if (isDeploy && !tunnelId && isWorkersBuild) {
-  console.warn("CLOUDFLARE_TUNNEL_ID is not set. Deploying without NATIVE_EGRESS for initial Cloudflare setup.");
-  console.warn("Add CLOUDFLARE_TUNNEL_ID in Settings > Build > Build variables and secrets, then retry deployment.");
-}
-
 let wranglerArgs = args;
 if (tunnelId) {
   const sourcePath = resolve("wrangler.jsonc");
-  const generatedPath = resolve(".wrangler", "generated-wrangler.jsonc");
   const source = await readFile(sourcePath, "utf8");
 
   const injectVpc = (content, id) => {
@@ -39,15 +32,17 @@ if (tunnelId) {
     );
   };
 
-  // In Cloudflare CI, Cloudflare automatically runs "npx wrangler deploy" after the build step.
-  // Update root wrangler.jsonc directly so that subsequent native wrangler commands preserve NATIVE_EGRESS.
-  if (isWorkersBuild && tunnelId !== "11111111-1111-4111-8111-111111111111") {
+  // Always update root wrangler.jsonc when a real CLOUDFLARE_TUNNEL_ID is provided.
+  // This ensures subsequent native commands (like "npx wrangler deploy" run by Cloudflare CI)
+  // preserve the NATIVE_EGRESS binding without being overwritten.
+  if (tunnelId !== "11111111-1111-4111-8111-111111111111") {
     const rootInjected = injectVpc(source, tunnelId);
     if (rootInjected !== source) {
       await writeFile(sourcePath, rootInjected);
     }
   }
 
+  const generatedPath = resolve(".wrangler", "generated-wrangler.jsonc");
   const generated = injectVpc(source, tunnelId).replace('"main": "src/index.ts"', '"main": "../src/index.ts"');
 
   if (generated === source && !source.includes('"vpc_networks"')) {
