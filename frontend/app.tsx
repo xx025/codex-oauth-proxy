@@ -887,10 +887,7 @@ function AntigravityModelQuota({
               <i style={{ width: `${secVal}%` }} />
             </div>
             <span class="quota-meta">
-              {t("quotaRemainingLabel", { percent: formatPercent(locale, secVal / 100) })}
-              {secondaryWindow?.resetsAt !== undefined
-                ? ` / ${t("resetsInSuffix", { duration: formatUntilReset(locale, secondaryWindow.resetsAt) })}`
-                : ""}
+              {Math.round(secVal)}%{secondaryWindow?.resetsAt !== undefined ? ` · ${formatUntilReset(locale, secondaryWindow.resetsAt)}` : ""}
             </span>
           </>
         ) : (
@@ -899,7 +896,7 @@ function AntigravityModelQuota({
               <i style={{ width: "100%" }} />
             </div>
             <span class="quota-meta">
-              {t("quotaAvailable")} · <a href="javascript:void(0)" onClick={() => setOpen(true)} style={{ textDecoration: "underline", color: "var(--brand-text)" }}>{t("viewGroupQuotas")}</a>
+              {t("available")}
             </span>
           </>
         )}
@@ -1044,52 +1041,50 @@ function AntigravityQuotaModal({
                 </p>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ fontWeight: 600, fontSize: "13px" }}>Five Hour Limit Remaining</span>
-                  <strong style={{ fontSize: "14px", color: fiveHourVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
+                  <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
+                    Five Hour Limit Remaining
+                  </span>
+                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>
                     {fiveHourVal < 100
-                      ? t("quotaRemainingLabel", { percent: formatPercent(locale, fiveHourVal / 100) })
-                      : t("quotaAvailable")}
-                  </strong>
+                      ? `${Math.round(fiveHourVal)}%${fiveHourReset ? ` · ${formatUntilReset(locale, fiveHourReset)}` : ""}`
+                      : (fiveHourReset ? `${formatUntilReset(locale, fiveHourReset)} · ${t("available")}` : t("available"))}
+                  </span>
                 </div>
-                <div class="quota-track" style={{ height: "3px", margin: 0, borderRadius: "2px" }}>
-                  <i
+                <div style={{ height: "3px", borderRadius: "2px", background: "var(--neutral-bg)", overflow: "hidden" }}>
+                  <div
                     style={{
+                      height: "100%",
+                      borderRadius: "2px",
                       width: `${fiveHourVal}%`,
-                      background: fiveHourVal <= 15 ? "var(--danger)" : "var(--success)",
+                      background: fiveHourVal <= 15 ? "var(--danger)" : "var(--brand)",
                     }}
                   />
                 </div>
-                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                  {fiveHourReset
-                    ? t("resetsInSuffix", { duration: formatUntilReset(locale, fiveHourReset) })
-                    : t("quotaAvailable")}
-                </span>
               </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ fontWeight: 600, fontSize: "13px" }}>Weekly Limit Remaining</span>
-                  <strong style={{ fontSize: "14px", color: weeklyVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
+                  <span style={{ fontSize: "12px", color: "var(--text)", fontWeight: 500 }}>
+                    Weekly Limit Remaining
+                  </span>
+                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>
                     {weeklyVal < 100
-                      ? t("quotaRemainingLabel", { percent: formatPercent(locale, weeklyVal / 100) })
-                      : t("quotaAvailable")}
-                  </strong>
+                      ? `${Math.round(weeklyVal)}%${weeklyReset ? ` · ${formatUntilReset(locale, weeklyReset)}` : ""}`
+                      : (weeklyReset ? `${formatUntilReset(locale, weeklyReset)} · ${t("available")}` : t("available"))}
+                  </span>
                 </div>
-                <div class="quota-track" style={{ height: "3px", margin: 0, borderRadius: "2px" }}>
-                  <i
+                <div style={{ height: "3px", borderRadius: "2px", background: "var(--neutral-bg)", overflow: "hidden" }}>
+                  <div
                     style={{
+                      height: "100%",
+                      borderRadius: "2px",
                       width: `${weeklyVal}%`,
-                      background: weeklyVal <= 15 ? "var(--danger)" : "var(--success)",
+                      background: weeklyVal <= 15 ? "var(--danger)" : "var(--brand)",
                     }}
                   />
                 </div>
-                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
-                  {weeklyReset
-                    ? t("resetsInSuffix", { duration: formatUntilReset(locale, weeklyReset) })
-                    : t("quotaAvailable")}
-                </span>
               </div>
             </div>
           );

@@ -14,6 +14,13 @@
     { "tag": "v1", "new_sqlite_classes": ["AccountPool"] },
     { "tag": "v2", "new_sqlite_classes": ["ProxyExecutor"] }
   ],
+  "vpc_networks": [
+    {
+      "binding": "NATIVE_EGRESS",
+      "tunnel_id": "63f25b3f-89c9-428b-9516-afd65c748b37",
+      "remote": true
+    }
+  ],
   "observability": {
     "enabled": true,
     "logs": {
