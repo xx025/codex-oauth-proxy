@@ -947,7 +947,7 @@ function AntigravityQuotaModal({
     {
       title: t("groupClaudeGpt"),
       models: claudeGptList,
-      defaultIncluded: "Claude Opus, Claude 3.7 Sonnet, Claude 3.5 Sonnet, GPT-OSS",
+      defaultIncluded: "Claude Opus, Claude Sonnet, GPT-OSS",
     },
     ...(otherList.length
       ? [
@@ -967,7 +967,7 @@ function AntigravityQuotaModal({
       title={t("modelQuotaTitle")}
       subtitle={t("modelQuotaSummary", { count: models.length })}
       close={close}
-      style={{ width: "min(92vw, 680px)" }}
+      style={{ width: "min(92vw, 620px)" }}
       footer={
         <Button tone="primary" onClick={close}>
           {t("close")}
@@ -978,13 +978,13 @@ function AntigravityQuotaModal({
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: "16px",
+          gap: "24px",
           maxHeight: "68vh",
           overflowY: "auto",
-          paddingRight: "6px",
+          padding: "4px 8px 12px 2px",
         }}
       >
-        {groups.map((group) => {
+        {groups.map((group, index) => {
           const groupModels = group.models;
           const includedText = groupModels.length
             ? groupModels.map((m) => m.modelId).join(", ")
@@ -1029,87 +1029,68 @@ function AntigravityQuotaModal({
             <div
               key={group.title}
               style={{
-                border: "1px solid var(--line)",
-                borderRadius: "8px",
-                background: "var(--surface)",
-                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                gap: "14px",
+                borderBottom: index < groups.length - 1 ? "1px solid var(--line)" : "none",
+                paddingBottom: index < groups.length - 1 ? "24px" : "8px",
               }}
             >
-              {/* Group Header */}
-              <div
-                style={{
-                  padding: "14px 18px",
-                  background: "var(--surface-subtle)",
-                  borderBottom: "1px solid var(--line)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 650 }}>{group.title}</h3>
-                </div>
-                <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: "12px", lineHeight: "1.4" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
+                  {group.title}
+                </h3>
+                <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: "13px" }}>
                   {t("groupIncludes", { models: includedText })}
                 </p>
               </div>
 
-              {/* Group Body: Pure Vertical Flow */}
-              <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                {/* Five Hour Limit */}
-                <div class="quota" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Five Hour Limit Remaining</span>
-                    <strong style={{ fontSize: "14px", color: fiveHourVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
-                      {fiveHourVal < 100
-                        ? t("quotaRemainingLabel", {
-                            percent: formatPercent(locale, fiveHourVal / 100),
-                          })
-                        : t("quotaAvailable")}
-                    </strong>
-                  </div>
-                  <div class="quota-track" style={{ height: "6px", margin: 0 }}>
-                    <i
-                      style={{
-                        width: `${fiveHourVal}%`,
-                        background: fiveHourVal <= 15 ? "var(--danger)" : "var(--success)",
-                      }}
-                    />
-                  </div>
-                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                    {fiveHourReset
-                      ? t("resetsInSuffix", {
-                          duration: formatUntilReset(locale, fiveHourReset),
-                        })
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontWeight: 600, fontSize: "13px" }}>Five Hour Limit Remaining</span>
+                  <strong style={{ fontSize: "14px", color: fiveHourVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
+                    {fiveHourVal < 100
+                      ? t("quotaRemainingLabel", { percent: formatPercent(locale, fiveHourVal / 100) })
                       : t("quotaAvailable")}
-                  </span>
+                  </strong>
                 </div>
+                <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                  <i
+                    style={{
+                      width: `${fiveHourVal}%`,
+                      background: fiveHourVal <= 15 ? "var(--danger)" : "var(--success)",
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                  {fiveHourReset
+                    ? t("resetsInSuffix", { duration: formatUntilReset(locale, fiveHourReset) })
+                    : t("quotaAvailable")}
+                </span>
+              </div>
 
-                {/* Weekly Limit */}
-                <div class="quota" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Weekly Limit Remaining</span>
-                    <strong style={{ fontSize: "14px", color: weeklyVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
-                      {weeklyVal < 100
-                        ? t("quotaRemainingLabel", {
-                            percent: formatPercent(locale, weeklyVal / 100),
-                          })
-                        : t("quotaAvailable")}
-                    </strong>
-                  </div>
-                  <div class="quota-track" style={{ height: "6px", margin: 0 }}>
-                    <i
-                      style={{
-                        width: `${weeklyVal}%`,
-                        background: weeklyVal <= 15 ? "var(--danger)" : "var(--success)",
-                      }}
-                    />
-                  </div>
-                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                    {weeklyReset
-                      ? t("resetsInSuffix", {
-                          duration: formatUntilReset(locale, weeklyReset),
-                        })
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontWeight: 600, fontSize: "13px" }}>Weekly Limit Remaining</span>
+                  <strong style={{ fontSize: "14px", color: weeklyVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
+                    {weeklyVal < 100
+                      ? t("quotaRemainingLabel", { percent: formatPercent(locale, weeklyVal / 100) })
                       : t("quotaAvailable")}
-                  </span>
+                  </strong>
                 </div>
+                <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                  <i
+                    style={{
+                      width: `${weeklyVal}%`,
+                      background: weeklyVal <= 15 ? "var(--danger)" : "var(--success)",
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                  {weeklyReset
+                    ? t("resetsInSuffix", { duration: formatUntilReset(locale, weeklyReset) })
+                    : t("quotaAvailable")}
+                </span>
               </div>
             </div>
           );

@@ -373,7 +373,7 @@ const en = {
     "Authorize with Google, then paste the complete localhost callback URL.",
   antigravityCallbackUrl: "Localhost callback URL",
   antigravityCallbackHelp:
-    "Paste the complete http://localhost:51121/oauth-callback URL from the browser address bar.",
+    "After authorizing, Google redirects to http://localhost:51121/oauth-callback?... Copy the complete URL from the address bar and paste it here (the connection error page is normal).",
   antigravityCallbackPlaceholder:
     "http://localhost:51121/oauth-callback?state=...&code=...",
   antigravityCallbackRequired: "Callback URL required",
@@ -731,7 +731,7 @@ const zh: Record<TranslationKey, string> = {
   antigravityOAuthSubtitle: "通过 Google 授权后，粘贴完整的 localhost 回调 URL。",
   antigravityCallbackUrl: "localhost 回调 URL",
   antigravityCallbackHelp:
-    "从浏览器地址栏粘贴完整的 http://localhost:51121/oauth-callback URL。",
+    "授权后浏览器会跳转到 http://localhost:51121/oauth-callback?...，直接从浏览器地址栏复制完整网址粘贴到此处即可（页面提示无法访问属正常情况）。",
   antigravityCallbackPlaceholder:
     "http://localhost:51121/oauth-callback?state=...&code=...",
   antigravityCallbackRequired: "请输入回调 URL",

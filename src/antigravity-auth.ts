@@ -5,6 +5,8 @@ export const ANTIGRAVITY_OAUTH_CLIENT_ID =
 export const ANTIGRAVITY_OAUTH_CLIENT_SECRET =
   String.fromCharCode(71,79,67,83,80,88,45,75,53,56,70,87,82,52,56,54,76,100,76,74,49,109,76,66,56,115,88,67,52,122,54,113,68,65,102);
 export const ANTIGRAVITY_OAUTH_REDIRECT_URI =
+  "https://codeassist.google.com/authcode";
+export const ANTIGRAVITY_LOCALHOST_REDIRECT_URI =
   "http://localhost:51121/oauth-callback";
 export const ANTIGRAVITY_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
@@ -89,7 +91,7 @@ export async function completeAntigravityLogin(
 ): Promise<ImportPayload> {
   if (session.expiresAt <= now())
     throw new PoolError(410, "Antigravity login expired; start again");
-  const code = parseCallbackUrl(callbackUrl, session.state);
+  const { code, redirectUri } = parseCallbackUrl(callbackUrl, session.state);
   const response = await upstreamFetch(TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -97,7 +99,7 @@ export async function completeAntigravityLogin(
       client_id: ANTIGRAVITY_OAUTH_CLIENT_ID,
       client_secret: ANTIGRAVITY_OAUTH_CLIENT_SECRET,
       code,
-      redirect_uri: ANTIGRAVITY_OAUTH_REDIRECT_URI,
+      redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }).toString(),
   });
@@ -216,26 +218,63 @@ export async function discoverAntigravityProject(
   return projectId;
 }
 
-function parseCallbackUrl(value: string, expectedState: string): string {
-  if (!value || value.length > 8_192)
-    throw new PoolError(400, "Paste the complete Antigravity localhost callback URL");
+function parseCallbackUrl(
+  value: string,
+  expectedState: string,
+): { code: string; redirectUri: string } {
+  const trimmed = stringValue(value);
+  if (!trimmed || trimmed.length > 8_192)
+    throw new PoolError(400, "Paste the complete callback URL or authorization code");
+
   try {
-    const callback = new URL(value);
-    if (
-      callback.protocol !== "http:" ||
-      callback.hostname !== "localhost" ||
-      callback.port !== "51121" ||
-      callback.pathname !== "/oauth-callback" ||
-      callback.username ||
-      callback.password ||
-      callback.searchParams.get("state") !== expectedState
-    ) throw new Error("invalid callback");
-    const code = stringValue(callback.searchParams.get("code"));
-    if (!code) throw new Error("missing code");
-    return code;
-  } catch {
-    throw new PoolError(400, "Invalid Antigravity callback URL or OAuth state");
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const callback = new URL(trimmed);
+      const state = callback.searchParams.get("state");
+      if (state && state !== expectedState) {
+        throw new PoolError(400, "Invalid Antigravity callback URL or OAuth state");
+      }
+      const code = stringValue(callback.searchParams.get("code"));
+      if (!code) throw new Error("missing code");
+
+      if (
+        callback.protocol === "https:" &&
+        callback.hostname === "codeassist.google.com" &&
+        callback.pathname === "/authcode"
+      ) {
+        return { code, redirectUri: "https://codeassist.google.com/authcode" };
+      }
+
+      if (
+        callback.protocol === "http:" &&
+        callback.hostname === "localhost" &&
+        callback.port === "51121" &&
+        callback.pathname === "/oauth-callback" &&
+        !callback.username &&
+        !callback.password
+      ) {
+        return { code, redirectUri: "http://localhost:51121/oauth-callback" };
+      }
+
+      throw new Error("unsupported callback URL");
+    }
+
+    if (trimmed.includes("code=")) {
+      const params = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed);
+      const state = params.get("state");
+      if (state && state !== expectedState) {
+        throw new PoolError(400, "Invalid Antigravity callback URL or OAuth state");
+      }
+      const code = stringValue(params.get("code"));
+      if (code) return { code, redirectUri: ANTIGRAVITY_OAUTH_REDIRECT_URI };
+    }
+
+    if (trimmed.startsWith("4/")) {
+      return { code: trimmed, redirectUri: ANTIGRAVITY_OAUTH_REDIRECT_URI };
+    }
+  } catch (err) {
+    if (err instanceof PoolError) throw err;
   }
+  throw new PoolError(400, "Invalid Antigravity callback URL or OAuth state");
 }
 
 async function apiRequest(
