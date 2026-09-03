@@ -1390,12 +1390,37 @@ function parseGeminiUsage(input: unknown, capturedAt: number): AccountUsage {
   const lowest = geminiModels.reduce((minimum, model) =>
     model.remainingPercent < minimum.remainingPercent ? model : minimum,
   );
+  const nowSeconds = Math.floor(capturedAt / 1000);
+  const shortTerm = geminiModels.filter(
+    (m) => m.resetsAt && m.resetsAt - nowSeconds <= 24 * 3600,
+  );
+  const longTerm = geminiModels.filter(
+    (m) => m.resetsAt && m.resetsAt - nowSeconds > 24 * 3600,
+  );
+  const primaryModel = shortTerm.length
+    ? shortTerm.reduce((min, m) =>
+        m.remainingPercent < min.remainingPercent ? m : min,
+      )
+    : lowest;
+  const secondaryModel = longTerm.length
+    ? longTerm.reduce((min, m) =>
+        m.remainingPercent < min.remainingPercent ? m : min,
+      )
+    : undefined;
+
   return {
     primary: {
-      usedPercent: Math.round((100 - lowest.remainingPercent) * 10_000) / 10_000,
-      remainingPercent: lowest.remainingPercent,
-      resetsAt: lowest.resetsAt,
+      usedPercent: Math.round((100 - primaryModel.remainingPercent) * 10_000) / 10_000,
+      remainingPercent: primaryModel.remainingPercent,
+      resetsAt: primaryModel.resetsAt,
     },
+    secondary: secondaryModel
+      ? {
+          usedPercent: Math.round((100 - secondaryModel.remainingPercent) * 10_000) / 10_000,
+          remainingPercent: secondaryModel.remainingPercent,
+          resetsAt: secondaryModel.resetsAt,
+        }
+      : undefined,
     geminiModels,
     capturedAt,
   };

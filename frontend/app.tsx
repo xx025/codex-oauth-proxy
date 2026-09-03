@@ -476,6 +476,11 @@ function Home({ accounts, keys, models, stats, settings }: any) {
 function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
   const { locale, t } = useI18n();
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [tab, setTab] = useState<"all" | "antigravity" | "codex">("all");
+
+  const agAccounts = accounts.filter((a: Account) => a.provider === "antigravity");
+  const codexAccounts = accounts.filter((a: Account) => a.provider !== "antigravity");
+
   const toggle = async (account: Account) => {
     try {
       await api(`/admin/api/accounts/${encodeURIComponent(account.id)}`, {
@@ -533,6 +538,144 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
       notify(t("deleteFailed"), message(error, t("requestFailed")), true);
     }
   };
+
+  const renderRow = (account: Account) => {
+    const isAntigravity = account.provider === "antigravity";
+    const identity = account.email || account.principalId || "";
+    const workspace = isAntigravity ? account.projectId : account.accountId;
+    const isRevealed = Boolean(revealed[account.id]);
+    return (
+      <article key={account.id} class="account-row">
+        <div class="identity">
+          <span class="avatar">
+            {(account.name || "A")[0].toUpperCase()}
+          </span>
+          <div>
+            <h3>
+              {account.name}{" "}
+              <span class="status disabled">
+                {t(isAntigravity ? "providerAntigravity" : "providerCodex")}
+              </span>
+            </h3>
+            <p class="masked-identity identity-line">
+              <span>{isRevealed ? identity : maskIdentity(identity)}</span>
+              <Button
+                class="identity-toggle"
+                aria-label={t(
+                  isRevealed
+                    ? "hideAccountIdentity"
+                    : "revealAccountIdentity",
+                  { name: account.name },
+                )}
+                onClick={() =>
+                  setRevealed({
+                    ...revealed,
+                    [account.id]: !isRevealed,
+                  })
+                }
+              >
+                <Icon name={isRevealed ? "eyeOff" : "eye"} />
+              </Button>
+            </p>
+            {workspace && (
+              <small class="identity-line">
+                <span>
+                  {t(isAntigravity ? "project" : "workspace")}: {isRevealed
+                    ? workspace
+                    : maskIdentity(workspace)}
+                </span>
+              </small>
+            )}
+            {account.usage && !account.usage.error && (
+              <small class="usage-snapshot">
+                {t("quotaCaptured", {
+                  date: formatDate(locale, account.usage.capturedAt),
+                })}
+                {account.usage.creditsBalance !== undefined
+                  ? ` · ${t("creditsBalance", { balance: formatNumber(locale, account.usage.creditsBalance) })}`
+                  : ""}
+                {account.usage.resetCreditsAvailable !== undefined
+                  ? ` · ${t("resetCredits", { count: formatNumber(locale, account.usage.resetCreditsAvailable) })}`
+                  : ""}
+              </small>
+            )}
+          </div>
+        </div>
+        {isAntigravity ? (
+          <>
+            <Quota
+              label={t("fiveHourLimit")}
+              window={account.usage?.primary}
+              error={account.usage?.error}
+            />
+            <AntigravityModelQuota
+              models={account.usage?.geminiModels}
+              primaryWindow={account.usage?.primary}
+              secondaryWindow={account.usage?.secondary}
+              error={account.usage?.error}
+            />
+          </>
+        ) : (
+          <>
+            <Quota
+              label={t("primaryQuota")}
+              window={account.usage?.primary}
+              error={account.usage?.error}
+            />
+            <Quota
+              label={t("secondaryQuota")}
+              window={account.usage?.secondary}
+              error={account.usage?.error}
+            />
+          </>
+        )}
+        <div>
+          <span
+            class={`status ${account.enabled && account.cooldownUntil <= Date.now() ? "healthy" : "disabled"}`}
+          >
+            {!account.enabled
+              ? t("disabled")
+              : account.cooldownUntil > Date.now()
+                ? t("coolingDown")
+                : t("available")}
+          </span>
+          <small class="account-health">
+            {t("failures", {
+              count: formatNumber(locale, account.failureCount),
+            })}
+            {account.lastStatus
+              ? ` · HTTP ${account.lastStatus}`
+              : ""}
+          </small>
+          {!isAntigravity && account.lastResetAt && (
+            <small>
+              {t("lastReset", {
+                date: formatDate(locale, account.lastResetAt),
+                status: t(resetStatusKey(account.lastResetStatus)),
+              })}
+            </small>
+          )}
+        </div>
+        <div class="row-actions">
+          <Button onClick={() => rename(account)}>
+            {t("rename")}
+          </Button>
+          {!isAntigravity && (
+            <Button onClick={() => reset(account)}>
+              {t("resetQuota")}
+            </Button>
+          )}
+          <Button onClick={() => toggle(account)}>
+            {account.enabled ? t("disable") : t("enable")}
+          </Button>
+          <Button tone="danger" onClick={() => remove(account)}>
+            {t("delete")}
+          </Button>
+        </div>
+      </article>
+    );
+  };
+
   return (
     <>
       <PageHeader
@@ -546,160 +689,48 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
             <Button onClick={() => open("browser")}>
               {t("copyLinkLogin")}
             </Button>
-            <Button onClick={() => open("antigravity")}>
-              {t("antigravityLogin")}
-            </Button>
             <Button tone="primary" onClick={() => open("device")}>
               {t("chatgptLogin")}
             </Button>
           </>
         }
       />
-      <Panel title={t("accountsAndQuota")} subtitle={t("serverOnlyTokens")}>
-        <div class="list">
-          {accounts.length ? (
-            accounts.map((account: Account) => {
-              const isAntigravity = account.provider === "antigravity";
-              const identity = account.email || account.principalId || "";
-              const workspace = isAntigravity ? account.projectId : account.accountId;
-              const isRevealed = Boolean(revealed[account.id]);
-              return (
-                <article class="account-row">
-                  <div class="identity">
-                    <span class="avatar">
-                      {(account.name || "A")[0].toUpperCase()}
-                    </span>
-                    <div>
-                      <h3>
-                        {account.name}{" "}
-                        <span class="status disabled">
-                          {t(isAntigravity ? "providerAntigravity" : "providerCodex")}
-                        </span>
-                      </h3>
-                      <p class="masked-identity identity-line">
-                        <span>{isRevealed ? identity : maskIdentity(identity)}</span>
-                        <Button
-                          class="identity-toggle"
-                          aria-label={t(
-                            isRevealed
-                              ? "hideAccountIdentity"
-                              : "revealAccountIdentity",
-                            { name: account.name },
-                          )}
-                          onClick={() =>
-                            setRevealed({
-                              ...revealed,
-                              [account.id]: !isRevealed,
-                            })
-                          }
-                        >
-                          <Icon name={isRevealed ? "eyeOff" : "eye"} />
-                        </Button>
-                      </p>
-                      {workspace && (
-                        <small class="identity-line">
-                          <span>
-                            {t(isAntigravity ? "project" : "workspace")}: {isRevealed
-                              ? workspace
-                              : maskIdentity(workspace)}
-                          </span>
-                        </small>
-                      )}
-                      {account.usage && !account.usage.error && (
-                        <small class="usage-snapshot">
-                          {t("quotaCaptured", {
-                            date: formatDate(locale, account.usage.capturedAt),
-                          })}
-                          {account.usage.creditsBalance !== undefined
-                            ? ` · ${t("creditsBalance", { balance: formatNumber(locale, account.usage.creditsBalance) })}`
-                            : ""}
-                          {account.usage.resetCreditsAvailable !== undefined
-                            ? ` · ${t("resetCredits", { count: formatNumber(locale, account.usage.resetCreditsAvailable) })}`
-                            : ""}
-                        </small>
-                      )}
-                    </div>
-                  </div>
-                  {isAntigravity ? (
-                    <>
-                      <Quota
-                        label={t("primaryQuota")}
-                        window={account.usage?.primary}
-                        error={account.usage?.error}
-                      />
-                      <AntigravityModelQuota
-                        models={account.usage?.geminiModels}
-                        error={account.usage?.error}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Quota
-                        label={t("primaryQuota")}
-                        window={account.usage?.primary}
-                        error={account.usage?.error}
-                      />
-                      <Quota
-                        label={t("secondaryQuota")}
-                        window={account.usage?.secondary}
-                        error={account.usage?.error}
-                      />
-                    </>
-                  )}
-                  <div>
-                    <span
-                      class={`status ${account.enabled && account.cooldownUntil <= Date.now() ? "healthy" : "disabled"}`}
-                    >
-                      {!account.enabled
-                        ? t("disabled")
-                        : account.cooldownUntil > Date.now()
-                          ? t("coolingDown")
-                          : t("available")}
-                    </span>
-                    <small class="account-health">
-                      {t("failures", {
-                        count: formatNumber(locale, account.failureCount),
-                      })}
-                      {account.lastStatus
-                        ? ` · HTTP ${account.lastStatus}`
-                        : ""}
-                    </small>
-                    {!isAntigravity && account.lastResetAt && (
-                      <small>
-                        {t("lastReset", {
-                          date: formatDate(locale, account.lastResetAt),
-                          status: t(resetStatusKey(account.lastResetStatus)),
-                        })}
-                      </small>
-                    )}
-                  </div>
-                  <div class="row-actions">
-                    <Button onClick={() => rename(account)}>
-                      {t("rename")}
-                    </Button>
-                    {!isAntigravity && (
-                      <Button onClick={() => reset(account)}>
-                        {t("resetQuota")}
-                      </Button>
-                    )}
-                    <Button onClick={() => toggle(account)}>
-                      {account.enabled ? t("disable") : t("enable")}
-                    </Button>
-                    <Button tone="danger" onClick={() => remove(account)}>
-                      {t("delete")}
-                    </Button>
-                  </div>
-                </article>
-              );
-            })
-          ) : (
+      {accounts.length ? (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          <button
+            type="button"
+            class={`button ${tab === "all" ? "primary" : ""}`}
+            onClick={() => setTab("all")}
+          >
+            {t("tabAll")} ({accounts.length})
+          </button>
+          <button
+            type="button"
+            class={`button ${tab === "antigravity" ? "primary" : ""}`}
+            onClick={() => setTab("antigravity")}
+          >
+            {t("tabAntigravity")} ({agAccounts.length})
+          </button>
+          <button
+            type="button"
+            class={`button ${tab === "codex" ? "primary" : ""}`}
+            onClick={() => setTab("codex")}
+          >
+            {t("tabCodex")} ({codexAccounts.length})
+          </button>
+        </div>
+      ) : null}
+
+      {!accounts.length ? (
+        <Panel title={t("accountsAndQuota")} subtitle={t("serverOnlyTokens")}>
+          <div class="list">
             <Empty
               title={t("noAccounts")}
               text={t("noAccountsText")}
               actions={
                 <>
-                  <Button onClick={() => open("antigravity")}>
-                    {t("antigravityLogin")}
+                  <Button onClick={() => open("browser")}>
+                    {t("copyLinkLogin")}
                   </Button>
                   <Button tone="primary" onClick={() => open("device")}>
                     {t("chatgptLogin")}
@@ -707,9 +738,38 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                 </>
               }
             />
+          </div>
+        </Panel>
+      ) : tab === "antigravity" ? (
+        <Panel title={t("antigravitySectionTitle")} subtitle={t("serverOnlyTokens")}>
+          <div class="list">
+            {agAccounts.length ? agAccounts.map(renderRow) : <Empty title={t("noAccounts")} text={t("noAccountsText")} />}
+          </div>
+        </Panel>
+      ) : tab === "codex" ? (
+        <Panel title={t("codexSectionTitle")} subtitle={t("serverOnlyTokens")}>
+          <div class="list">
+            {codexAccounts.length ? codexAccounts.map(renderRow) : <Empty title={t("noAccounts")} text={t("noAccountsText")} />}
+          </div>
+        </Panel>
+      ) : (
+        <>
+          {agAccounts.length > 0 && (
+            <Panel title={t("antigravitySectionTitle")} subtitle={t("serverOnlyTokens")}>
+              <div class="list">
+                {agAccounts.map(renderRow)}
+              </div>
+            </Panel>
           )}
-        </div>
-      </Panel>
+          {codexAccounts.length > 0 && (
+            <Panel title={t("codexSectionTitle")} subtitle={t("serverOnlyTokens")}>
+              <div class="list">
+                {codexAccounts.map(renderRow)}
+              </div>
+            </Panel>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -761,9 +821,13 @@ function Quota({
 
 function AntigravityModelQuota({
   models,
+  primaryWindow,
+  secondaryWindow,
   error,
 }: {
   models?: GeminiModelUsage[];
+  primaryWindow?: UsageWindow;
+  secondaryWindow?: UsageWindow;
   error?: string;
 }) {
   const { locale, t } = useI18n();
@@ -772,104 +836,257 @@ function AntigravityModelQuota({
   if (error || !models?.length)
     return (
       <div class="quota">
-        <small>{t("geminiModelQuota")}</small>
+        <small>{t("weeklyLimit")}</small>
         <span title={error}>{error || t("quotaNotRefreshed")}</span>
       </div>
     );
+
+  const secVal = secondaryWindow
+    ? Math.max(0, Math.min(100, Number(secondaryWindow.remainingPercent) || 0))
+    : undefined;
 
   return (
     <>
       <div class="quota">
         <div class="quota-head">
-          <small>{t("geminiModelQuota")}</small>
+          <small>{t("weeklyLimit")}</small>
           <button
             type="button"
             class="button ghost"
             style={{ padding: "0 6px", fontSize: "11px", height: "20px", minHeight: "20px" }}
             onClick={() => setOpen(true)}
           >
-            {t("modelQuotaSummary", { count: models.length })}
+            {t("viewGroupQuotas")}
           </button>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", margin: "4px 0 2px" }}>
-          {models.slice(0, 2).map((m) => {
-            const pct = Math.round(m.remainingPercent);
-            const shortName = m.modelId.replace(/^gemini-/, "g-").replace(/^claude-/, "c-");
-            return (
-              <span
-                key={m.modelId}
-                class="status disabled"
-                style={{ fontSize: "10px", padding: "1px 5px", lineHeight: "1.4" }}
-                title={`${m.modelId}: ${pct}%`}
-              >
-                {shortName}: {pct}%
-              </span>
-            );
-          })}
-          {models.length > 2 && (
-            <button
-              type="button"
-              class="button ghost"
-              style={{ fontSize: "10px", padding: "0 4px", height: "18px", minHeight: "18px" }}
-              onClick={() => setOpen(true)}
-            >
-              +{models.length - 2}
-            </button>
-          )}
-        </div>
-        <span class="quota-meta">
-          <a
-            href="javascript:void(0)"
-            onClick={() => setOpen(true)}
-            style={{ textDecoration: "underline", color: "var(--brand-text)", fontSize: "11px" }}
-          >
-            {t("viewModelQuotas")}
-          </a>
-        </span>
+        {secVal !== undefined ? (
+          <>
+            <div class="quota-track">
+              <i style={{ width: `${secVal}%` }} />
+            </div>
+            <span class="quota-meta">
+              {t("quotaRemainingLabel", { percent: formatPercent(locale, secVal / 100) })}
+              {secondaryWindow?.resetsAt !== undefined
+                ? ` / ${t("resetsInSuffix", { duration: formatUntilReset(locale, secondaryWindow.resetsAt) })}`
+                : ""}
+            </span>
+          </>
+        ) : (
+          <>
+            <div class="quota-track">
+              <i style={{ width: "100%" }} />
+            </div>
+            <span class="quota-meta">
+              {t("quotaAvailable")} · <a href="javascript:void(0)" onClick={() => setOpen(true)} style={{ textDecoration: "underline", color: "var(--brand-text)" }}>{t("viewGroupQuotas")}</a>
+            </span>
+          </>
+        )}
       </div>
 
       {open && (
-        <Modal
-          title={t("modelQuotaTitle")}
-          subtitle={t("modelQuotaSummary", { count: models.length })}
+        <AntigravityQuotaModal
+          models={models}
+          primaryWindow={primaryWindow}
+          secondaryWindow={secondaryWindow}
           close={() => setOpen(false)}
-          footer={
-            <Button tone="primary" onClick={() => setOpen(false)}>
-              {t("close")}
-            </Button>
-          }
-        >
-          <div style={{ display: "grid", gap: "10px", maxHeight: "60vh", overflowY: "auto", padding: "4px 0" }}>
-            {models.map((model) => {
-              const value = Math.max(0, Math.min(100, Number(model.remainingPercent) || 0));
-              return (
-                <div
-                  key={model.modelId}
-                  class="quota"
-                  style={{ border: "1px solid var(--line)", borderRadius: "6px", padding: "10px 14px" }}
-                >
-                  <div class="quota-head">
-                    <strong style={{ fontSize: "13px" }}>{model.modelId}</strong>
-                    <strong>{formatPercent(locale, value / 100)}</strong>
-                  </div>
-                  <div class="quota-track" style={{ margin: "6px 0 4px" }}>
-                    <i style={{ width: `${value}%` }} />
-                  </div>
-                  <span class="quota-meta">
-                    {model.remainingAmount !== undefined
-                      ? t("geminiRemainingAmount", { amount: String(model.remainingAmount) })
-                      : t("quotaRemaining", { percent: formatPercent(locale, value / 100) })}
-                    {model.resetsAt !== undefined
-                      ? ` / ${t("resetsAt", { date: formatDate(locale, model.resetsAt * 1_000) })}`
-                      : ""}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </Modal>
+        />
       )}
     </>
+  );
+}
+
+function AntigravityQuotaModal({
+  models,
+  primaryWindow,
+  secondaryWindow,
+  close,
+}: {
+  models: GeminiModelUsage[];
+  primaryWindow?: UsageWindow;
+  secondaryWindow?: UsageWindow;
+  close: () => void;
+}) {
+  const { locale, t } = useI18n();
+
+  const geminiList = models.filter((m) => m.modelId.toLowerCase().includes("gemini"));
+  const claudeGptList = models.filter((m) => {
+    const id = m.modelId.toLowerCase();
+    return id.includes("claude") || id.includes("gpt") || id.includes("opus") || id.includes("sonnet");
+  });
+  const otherList = models.filter((m) => !geminiList.includes(m) && !claudeGptList.includes(m));
+
+  const groups = [
+    {
+      title: t("groupGemini"),
+      models: geminiList,
+      defaultIncluded: "Gemini 2.5 Pro, Gemini 2.5 Flash, Gemini 3 Pro",
+    },
+    {
+      title: t("groupClaudeGpt"),
+      models: claudeGptList,
+      defaultIncluded: "Claude Opus, Claude 3.7 Sonnet, Claude 3.5 Sonnet, GPT-OSS",
+    },
+    ...(otherList.length
+      ? [
+          {
+            title: t("groupOther"),
+            models: otherList,
+            defaultIncluded: otherList.map((m) => m.modelId).join(", "),
+          },
+        ]
+      : []),
+  ];
+
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  return (
+    <Modal
+      title={t("modelQuotaTitle")}
+      subtitle={t("modelQuotaSummary", { count: models.length })}
+      close={close}
+      footer={
+        <Button tone="primary" onClick={close}>
+          {t("close")}
+        </Button>
+      }
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: "16px",
+          maxHeight: "65vh",
+          overflowY: "auto",
+          padding: "4px 0",
+        }}
+      >
+        {groups.map((group) => {
+          const groupModels = group.models;
+          const includedText = groupModels.length
+            ? groupModels.map((m) => m.modelId).join(", ")
+            : group.defaultIncluded;
+
+          const shortTerm = groupModels.filter(
+            (m) => m.resetsAt && m.resetsAt - nowSec <= 24 * 3600,
+          );
+          const longTerm = groupModels.filter(
+            (m) => m.resetsAt && m.resetsAt - nowSec > 24 * 3600,
+          );
+
+          const fiveHourItem = shortTerm.length
+            ? shortTerm.reduce((min, m) =>
+                m.remainingPercent < min.remainingPercent ? m : min,
+              )
+            : groupModels.length
+              ? groupModels[0]
+              : undefined;
+
+          const weeklyItem = longTerm.length
+            ? longTerm.reduce((min, m) =>
+                m.remainingPercent < min.remainingPercent ? m : min,
+              )
+            : undefined;
+
+          const fiveHourVal = fiveHourItem
+            ? Math.max(0, Math.min(100, fiveHourItem.remainingPercent))
+            : primaryWindow
+              ? Math.max(0, Math.min(100, primaryWindow.remainingPercent))
+              : 100;
+          const fiveHourReset = fiveHourItem?.resetsAt ?? primaryWindow?.resetsAt;
+
+          const weeklyVal = weeklyItem
+            ? Math.max(0, Math.min(100, weeklyItem.remainingPercent))
+            : secondaryWindow
+              ? Math.max(0, Math.min(100, secondaryWindow.remainingPercent))
+              : 100;
+          const weeklyReset = weeklyItem?.resetsAt ?? secondaryWindow?.resetsAt;
+
+          return (
+            <div
+              key={group.title}
+              style={{
+                border: "1px solid var(--line)",
+                borderRadius: "8px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "12px 16px",
+                  background: "var(--surface-subtle)",
+                  borderBottom: "1px solid var(--line)",
+                }}
+              >
+                <strong style={{ fontSize: "14px", display: "block" }}>
+                  {group.title}
+                </strong>
+                <small
+                  style={{
+                    color: "var(--muted)",
+                    display: "block",
+                    marginTop: "3px",
+                  }}
+                >
+                  {t("groupIncludes", { models: includedText })}
+                </small>
+              </div>
+              <div
+                style={{
+                  padding: "14px 16px",
+                  display: "grid",
+                  gap: "14px",
+                }}
+              >
+                <div class="quota">
+                  <div class="quota-head">
+                    <small style={{ fontWeight: 600 }}>{t("fiveHourLimit")}</small>
+                    <strong style={{ fontSize: "12px" }}>
+                      {fiveHourVal < 100
+                        ? t("quotaRemainingLabel", {
+                            percent: formatPercent(locale, fiveHourVal / 100),
+                          })
+                        : t("quotaAvailable")}
+                    </strong>
+                  </div>
+                  <div class="quota-track">
+                    <i style={{ width: `${fiveHourVal}%` }} />
+                  </div>
+                  <span class="quota-meta">
+                    {fiveHourReset
+                      ? t("resetsInSuffix", {
+                          duration: formatUntilReset(locale, fiveHourReset),
+                        })
+                      : t("quotaAvailable")}
+                  </span>
+                </div>
+
+                <div class="quota">
+                  <div class="quota-head">
+                    <small style={{ fontWeight: 600 }}>{t("weeklyLimit")}</small>
+                    <strong style={{ fontSize: "12px" }}>
+                      {weeklyVal < 100
+                        ? t("quotaRemainingLabel", {
+                            percent: formatPercent(locale, weeklyVal / 100),
+                          })
+                        : t("quotaAvailable")}
+                    </strong>
+                  </div>
+                  <div class="quota-track">
+                    <i style={{ width: `${weeklyVal}%` }} />
+                  </div>
+                  <span class="quota-meta">
+                    {weeklyReset
+                      ? t("resetsInSuffix", {
+                          duration: formatUntilReset(locale, weeklyReset),
+                        })
+                      : t("quotaAvailable")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 

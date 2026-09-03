@@ -90,6 +90,16 @@ npx wrangler secret put KEY_ENCRYPTION_SECRET
 CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
 
+## 致谢
+
+本项目在开发过程中借鉴、参考并使用了以下开源项目：
+
+- [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+- [jlcodes99/cockpit-tools](https://github.com/jlcodes99/cockpit-tools)
+- [dvcrn/codex-oauth-proxy](https://github.com/dvcrn/codex-oauth-proxy)
+
+特别感谢 **Cloudflare** 平台提供的慷慨免费计划与优秀的开发者生态。
+
 ## 许可证
 
 [MIT](LICENSE)

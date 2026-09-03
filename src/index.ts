@@ -100,13 +100,15 @@ export class AccountPool extends DurableObject<Env> {
       }
       if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
         const cache = await this.ctx.storage.get<ModelCatalogCache>(MODEL_CATALOG_CACHE_KEY);
-        if (!cache || cache.expiresAt <= Date.now()) {
+        if (!cache || (cache.expiresAt > 0 && cache.expiresAt <= Date.now())) {
           if (cache) await this.ctx.storage.delete(MODEL_CATALOG_CACHE_KEY);
           return new Response(null, { status: 204 });
         }
         const headers = new Headers({
           "content-type": cache.contentType || "application/json; charset=utf-8",
-          "cache-control": `private, max-age=${Math.max(0, Math.floor((cache.expiresAt - Date.now()) / 1000))}`,
+          "cache-control": cache.expiresAt > 0
+            ? `private, max-age=${Math.max(0, Math.floor((cache.expiresAt - Date.now()) / 1000))}`
+            : "private, max-age=86400",
           "x-codex-model-cache": "hit",
           "x-codex-model-cache-created-at": String(cache.createdAt),
         });
@@ -124,7 +126,7 @@ export class AccountPool extends DurableObject<Env> {
           body: payload.body,
           contentType: payload.contentType || "application/json; charset=utf-8",
           createdAt: now,
-          expiresAt: now + MODEL_CATALOG_CACHE_TTL_MS,
+          expiresAt: 0,
         } satisfies ModelCatalogCache);
         return json({ ok: true }, 201);
       }
@@ -353,7 +355,7 @@ export const worker = {
         return redirect("/");
       }
       if (url.pathname.startsWith("/admin/api/")) {
-        return await handleAdmin(request, env);
+        return await handleAdmin(request, env, ctx);
       }
       if (!isProxyRoute(url.pathname)) return json({ error: "Not found" }, 404);
       if (!await validProxyAuth(request, env)) return json({ error: "Unauthorized" }, 401);
@@ -366,7 +368,7 @@ export const worker = {
 
 export default worker;
 
-async function handleAdmin(request: Request, env: Env): Promise<Response> {
+async function handleAdmin(request: Request, env: Env, ctx: WaitUntilContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/admin/api/session" && request.method === "POST") {
     enforceSameOrigin(request);
@@ -402,6 +404,14 @@ async function handleAdmin(request: Request, env: Env): Promise<Response> {
     headers: { "content-type": "application/json" },
     body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
   }));
+  if (response.ok && request.method === "POST" && (upstreamPath === "/accounts" || upstreamPath.startsWith("/oauth/"))) {
+    ctx.waitUntil((async () => {
+      try {
+        const refreshReq = new Request("https://internal/v1/models?refresh=1");
+        await proxyExecutorStub(env, refreshReq).fetch(refreshReq);
+      } catch {}
+    })());
+  }
   return cloneWithSecurityHeaders(response);
 }
 
