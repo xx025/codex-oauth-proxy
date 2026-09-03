@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const tunnelId = process.env.CLOUDFLARE_TUNNEL_ID || process.env.NATIVE_EGRESS_TUNNEL_ID;
+const customToken = process.env.DEPLOY_API_TOKEN || process.env.VPC_DEPLOY_TOKEN || process.env.CUSTOM_API_TOKEN;
 const args = process.argv.slice(2);
 const isDeploy = args[0] === "deploy" && !args.includes("--dry-run");
 
@@ -15,6 +16,15 @@ if (isDeploy && !tunnelId) {
   console.error("Set CLOUDFLARE_TUNNEL_ID to your Cloudflare Tunnel/VPC egress ID before deploying.");
   console.error("Example: CLOUDFLARE_TUNNEL_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx npm run deploy");
   process.exit(1);
+}
+
+// In Cloudflare CI, Cloudflare automatically injects its default restricted API token.
+// If the user provided a custom DEPLOY_API_TOKEN with VPC/Tunnel permissions, persist it in .env
+// so subsequent native commands (like "npx wrangler deploy") automatically use the authorized token.
+if (customToken) {
+  try {
+    await writeFile(resolve(".env"), `CLOUDFLARE_API_TOKEN=${customToken}\n`);
+  } catch {}
 }
 
 let wranglerArgs = args;
@@ -55,7 +65,12 @@ if (tunnelId) {
   wranglerArgs = ["--config", generatedPath, ...args];
 }
 
-const child = spawn("wrangler", wranglerArgs, { stdio: "inherit", shell: process.platform === "win32" });
+const env = { ...process.env };
+if (customToken) {
+  env.CLOUDFLARE_API_TOKEN = customToken;
+}
+
+const child = spawn("wrangler", wranglerArgs, { stdio: "inherit", shell: process.platform === "win32", env });
 child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);
