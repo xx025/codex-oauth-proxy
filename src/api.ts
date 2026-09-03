@@ -112,7 +112,8 @@ export function prepareProxyRequest(
   if (
     modelName.startsWith("gemini-") ||
     modelName.startsWith("antigravity-") ||
-    modelName.startsWith("claude-")
+    modelName.startsWith("claude-") ||
+    modelName.startsWith("gpt-oss")
   ) {
     if (pathname !== "/v1/responses" && pathname !== "/v1/chat/completions")
       throw new PoolError(404, "Not found");

@@ -351,7 +351,7 @@ describe("edge worker", () => {
     expect(response.status).toBe(200);
     const catalog = await response.json() as { data: Array<{ id: string; object: string; family?: string }> };
     expect(catalog.data.some((m) => m.id === "gpt-5.6-sol")).toBe(true);
-    expect(catalog.data.some((m) => m.id === "gemini-2.5-pro" && m.family === "antigravity")).toBe(true);
+    expect(catalog.data.some((m) => m.id === "gemini-3.7-flash-high" && m.family === "antigravity")).toBe(true);
   });
 
   it("serves Antigravity models when only Antigravity accounts are configured", async () => {
@@ -364,7 +364,7 @@ describe("edge worker", () => {
     }), env as never, context().ctx);
     expect(response.status).toBe(200);
     const catalog = await response.json() as { data: Array<{ id: string; family?: string }> };
-    expect(catalog.data.some((m) => m.id === "gemini-2.5-pro" && m.family === "antigravity")).toBe(true);
+    expect(catalog.data.some((m) => m.id === "gemini-3.7-flash-high" && m.family === "antigravity")).toBe(true);
     expect(catalog.data.some((m) => m.id === "gemini-2.5-flash")).toBe(true);
   });
 
