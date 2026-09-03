@@ -5,8 +5,6 @@ export const ANTIGRAVITY_OAUTH_CLIENT_ID =
 export const ANTIGRAVITY_OAUTH_CLIENT_SECRET =
   String.fromCharCode(71,79,67,83,80,88,45,75,53,56,70,87,82,52,56,54,76,100,76,74,49,109,76,66,56,115,88,67,52,122,54,113,68,65,102);
 export const ANTIGRAVITY_OAUTH_REDIRECT_URI =
-  "https://codeassist.google.com/authcode";
-export const ANTIGRAVITY_LOCALHOST_REDIRECT_URI =
   "http://localhost:51121/oauth-callback";
 export const ANTIGRAVITY_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",

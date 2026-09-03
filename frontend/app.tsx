@@ -1932,17 +1932,14 @@ function AddAntigravityDialog({ close, reload, notify }: any) {
     [jsonPayload, setJsonPayload] = useState("");
 
   const startOAuth = async () => {
-    const popup = window.open("about:blank", "antigravityOAuth");
-    if (popup) popup.opener = null;
     try {
       const data = await api<any>("/admin/api/oauth/antigravity/start", {
         method: "POST",
         body: JSON.stringify({ name: name.trim() }),
       });
       setLogin(data.login);
-      if (popup) popup.location.href = data.login.authorizationUrl;
+      window.open(data.login.authorizationUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
-      popup?.close();
       notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
     }
   };
@@ -2153,8 +2150,6 @@ function AddCodexDialog({ close, reload, notify }: any) {
     [jsonPayload, setJsonPayload] = useState("");
 
   const start = async () => {
-    const popup = window.open("about:blank", "codexLogin");
-    if (popup) popup.opener = null;
     const endpoint =
       method === "device"
         ? "/admin/api/oauth/device/start"
@@ -2165,13 +2160,14 @@ function AddCodexDialog({ close, reload, notify }: any) {
         body: JSON.stringify({ name: name.trim() }),
       });
       setLogin(data.login);
-      if (popup)
-        popup.location.href =
-          method === "device"
-            ? data.login.verificationUrl
-            : data.login.authorizationUrl;
+      window.open(
+        method === "device"
+          ? data.login.verificationUrl
+          : data.login.authorizationUrl,
+        "_blank",
+        "noopener,noreferrer",
+      );
     } catch (error) {
-      popup?.close();
       notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
     }
   };
