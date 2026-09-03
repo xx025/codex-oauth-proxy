@@ -873,14 +873,13 @@ function AntigravityModelQuota({
       <div class="quota">
         <div class="quota-head">
           <small>{t("weeklyLimit")}</small>
-          <button
-            type="button"
-            class="button ghost"
-            style={{ padding: "0 6px", fontSize: "11px", height: "20px", minHeight: "20px" }}
+          <a
+            href="javascript:void(0)"
             onClick={() => setOpen(true)}
+            style={{ fontSize: "11px", color: "var(--brand-text)", textDecoration: "underline" }}
           >
             {t("viewGroupQuotas")}
-          </button>
+          </a>
         </div>
         {secVal !== undefined ? (
           <>
@@ -1054,7 +1053,7 @@ function AntigravityQuotaModal({
                       : t("quotaAvailable")}
                   </strong>
                 </div>
-                <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                <div class="quota-track" style={{ height: "3px", margin: 0, borderRadius: "2px" }}>
                   <i
                     style={{
                       width: `${fiveHourVal}%`,
@@ -1062,7 +1061,7 @@ function AntigravityQuotaModal({
                     }}
                   />
                 </div>
-                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
                   {fiveHourReset
                     ? t("resetsInSuffix", { duration: formatUntilReset(locale, fiveHourReset) })
                     : t("quotaAvailable")}
@@ -1078,7 +1077,7 @@ function AntigravityQuotaModal({
                       : t("quotaAvailable")}
                   </strong>
                 </div>
-                <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                <div class="quota-track" style={{ height: "3px", margin: 0, borderRadius: "2px" }}>
                   <i
                     style={{
                       width: `${weeklyVal}%`,
