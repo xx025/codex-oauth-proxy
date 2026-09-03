@@ -28,12 +28,29 @@ if (tunnelId) {
   const sourcePath = resolve("wrangler.jsonc");
   const generatedPath = resolve(".wrangler", "generated-wrangler.jsonc");
   const source = await readFile(sourcePath, "utf8");
-  const generated = source.replace(
-    '  "migrations": [\n    { "tag": "v1", "new_sqlite_classes": ["AccountPool"] },\n    { "tag": "v2", "new_sqlite_classes": ["ProxyExecutor"] }\n  ],',
-    `  "migrations": [\n    { "tag": "v1", "new_sqlite_classes": ["AccountPool"] },\n    { "tag": "v2", "new_sqlite_classes": ["ProxyExecutor"] }\n  ],\n  "vpc_networks": [\n    {\n      "binding": "NATIVE_EGRESS",\n      "tunnel_id": "${tunnelId}",\n      "remote": true\n    }\n  ],`,
-  ).replace('"main": "src/index.ts"', '"main": "../src/index.ts"');
 
-  if (generated === source) {
+  const injectVpc = (content, id) => {
+    if (content.includes('"vpc_networks"')) {
+      return content.replace(/"tunnel_id":\s*"[^"]*"/, `"tunnel_id": "${id}"`);
+    }
+    return content.replace(
+      /("migrations":\s*\[[\s\S]*?\],)/,
+      `$1\n  "vpc_networks": [\n    {\n      "binding": "NATIVE_EGRESS",\n      "tunnel_id": "${id}",\n      "remote": true\n    }\n  ],`,
+    );
+  };
+
+  // In Cloudflare CI, Cloudflare automatically runs "npx wrangler deploy" after the build step.
+  // Update root wrangler.jsonc directly so that subsequent native wrangler commands preserve NATIVE_EGRESS.
+  if (isWorkersBuild && tunnelId !== "11111111-1111-4111-8111-111111111111") {
+    const rootInjected = injectVpc(source, tunnelId);
+    if (rootInjected !== source) {
+      await writeFile(sourcePath, rootInjected);
+    }
+  }
+
+  const generated = injectVpc(source, tunnelId).replace('"main": "src/index.ts"', '"main": "../src/index.ts"');
+
+  if (generated === source && !source.includes('"vpc_networks"')) {
     console.error("Could not inject NATIVE_EGRESS VPC binding into wrangler.jsonc.");
     process.exit(1);
   }
