@@ -2070,6 +2070,41 @@ function AddAntigravityDialog({ close, reload, notify }: any) {
               placeholder={t("antigravityCallbackPlaceholder")}
             />
           </label>
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: "6px",
+              background: "var(--surface-subtle)",
+              border: "1px solid var(--line)",
+              fontSize: "12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            }}
+          >
+            <span style={{ color: "var(--muted)" }}>{t("localServerTipAntigravity")}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <code
+                style={{
+                  flex: 1,
+                  padding: "4px 8px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "4px",
+                  userSelect: "all",
+                }}
+              >
+                python -m http.server 51121
+              </code>
+              <Button
+                onClick={() =>
+                  copyText("python -m http.server 51121", notify, t, "commandCopied")
+                }
+              >
+                {t("copy")}
+              </Button>
+            </div>
+          </div>
         </>
       )}
 
@@ -2374,6 +2409,41 @@ function AddCodexDialog({ close, reload, notify }: any) {
               placeholder={t("callbackPlaceholder")}
             />
           </label>
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: "6px",
+              background: "var(--surface-subtle)",
+              border: "1px solid var(--line)",
+              fontSize: "12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+            }}
+          >
+            <span style={{ color: "var(--muted)" }}>{t("localServerTipCodex")}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <code
+                style={{
+                  flex: 1,
+                  padding: "4px 8px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "4px",
+                  userSelect: "all",
+                }}
+              >
+                python -m http.server 1455
+              </code>
+              <Button
+                onClick={() =>
+                  copyText("python -m http.server 1455", notify, t, "commandCopied")
+                }
+              >
+                {t("copy")}
+              </Button>
+            </div>
+          </div>
         </>
       )}
 

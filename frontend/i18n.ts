@@ -68,6 +68,11 @@ const en = {
   copyLinkLogin: "Copy-link sign in",
   antigravityLogin: "Sign in with Antigravity",
   chatgptLogin: "Sign in with ChatGPT",
+  commandCopied: "Command copied",
+  localServerTipAntigravity:
+    "If the browser keeps loading without redirecting, run a temporary server in your local terminal:",
+  localServerTipCodex:
+    "If the browser keeps loading without redirecting, run a temporary server in your local terminal:",
   addAntigravityAccount: "+ Add Antigravity Account",
   addCodexAccount: "+ Add Codex Account",
   addAntigravityTitle: "Add Antigravity Account",
@@ -445,6 +450,11 @@ const zh: Record<TranslationKey, string> = {
   copyLinkLogin: "复制链接登录",
   antigravityLogin: "Antigravity 登录",
   chatgptLogin: "使用 ChatGPT 登录",
+  commandCopied: "命令已复制",
+  localServerTipAntigravity:
+    "如遇浏览器一直加载未跳转，可在本地终端运行临时监听服务：",
+  localServerTipCodex:
+    "如遇浏览器一直加载未跳转，可在本地终端运行临时监听服务：",
   addAntigravityAccount: "+ 添加 Antigravity 账号",
   addCodexAccount: "+ 添加 Codex 账号",
   addAntigravityTitle: "添加 Antigravity 账号",
