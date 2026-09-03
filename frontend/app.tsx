@@ -99,7 +99,7 @@ type Stats = {
   retentionLimit?: number;
 };
 type Toast = { title: string; message: string; error?: boolean };
-type Dialog = "import" | "device" | "browser" | "antigravity" | "key" | null;
+type Dialog = "key" | "add-antigravity" | "add-codex" | null;
 type AppInfo = { version?: string; author?: string; repository?: string };
 
 const validViews = new Set([
@@ -685,12 +685,11 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
         actions={
           <>
             <Button onClick={refresh}>{t("refreshQuota")}</Button>
-            <Button onClick={() => open("import")}>{t("manualImport")}</Button>
-            <Button onClick={() => open("browser")}>
-              {t("copyLinkLogin")}
+            <Button tone="primary" onClick={() => open("add-antigravity")}>
+              {t("addAntigravityAccount")}
             </Button>
-            <Button tone="primary" onClick={() => open("device")}>
-              {t("chatgptLogin")}
+            <Button tone="primary" onClick={() => open("add-codex")}>
+              {t("addCodexAccount")}
             </Button>
           </>
         }
@@ -729,11 +728,11 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
               text={t("noAccountsText")}
               actions={
                 <>
-                  <Button onClick={() => open("browser")}>
-                    {t("copyLinkLogin")}
+                  <Button tone="primary" onClick={() => open("add-antigravity")}>
+                    {t("addAntigravityAccount")}
                   </Button>
-                  <Button tone="primary" onClick={() => open("device")}>
-                    {t("chatgptLogin")}
+                  <Button tone="primary" onClick={() => open("add-codex")}>
+                    {t("addCodexAccount")}
                   </Button>
                 </>
               }
@@ -743,13 +742,37 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
       ) : tab === "antigravity" ? (
         <Panel title={t("antigravitySectionTitle")} subtitle={t("serverOnlyTokens")}>
           <div class="list">
-            {agAccounts.length ? agAccounts.map(renderRow) : <Empty title={t("noAccounts")} text={t("noAccountsText")} />}
+            {agAccounts.length ? (
+              agAccounts.map(renderRow)
+            ) : (
+              <Empty
+                title={t("noAccounts")}
+                text={t("noAccountsText")}
+                actions={
+                  <Button tone="primary" onClick={() => open("add-antigravity")}>
+                    {t("addAntigravityAccount")}
+                  </Button>
+                }
+              />
+            )}
           </div>
         </Panel>
       ) : tab === "codex" ? (
         <Panel title={t("codexSectionTitle")} subtitle={t("serverOnlyTokens")}>
           <div class="list">
-            {codexAccounts.length ? codexAccounts.map(renderRow) : <Empty title={t("noAccounts")} text={t("noAccountsText")} />}
+            {codexAccounts.length ? (
+              codexAccounts.map(renderRow)
+            ) : (
+              <Empty
+                title={t("noAccounts")}
+                text={t("noAccountsText")}
+                actions={
+                  <Button tone="primary" onClick={() => open("add-codex")}>
+                    {t("addCodexAccount")}
+                  </Button>
+                }
+              />
+            )}
           </div>
         </Panel>
       ) : (
@@ -944,6 +967,7 @@ function AntigravityQuotaModal({
       title={t("modelQuotaTitle")}
       subtitle={t("modelQuotaSummary", { count: models.length })}
       close={close}
+      style={{ width: "min(92vw, 680px)" }}
       footer={
         <Button tone="primary" onClick={close}>
           {t("close")}
@@ -952,11 +976,12 @@ function AntigravityQuotaModal({
     >
       <div
         style={{
-          display: "grid",
+          display: "flex",
+          flexDirection: "column",
           gap: "16px",
-          maxHeight: "65vh",
+          maxHeight: "68vh",
           overflowY: "auto",
-          padding: "4px 0",
+          paddingRight: "6px",
         }}
       >
         {groups.map((group) => {
@@ -1006,40 +1031,33 @@ function AntigravityQuotaModal({
               style={{
                 border: "1px solid var(--line)",
                 borderRadius: "8px",
+                background: "var(--surface)",
                 overflow: "hidden",
               }}
             >
+              {/* Group Header */}
               <div
                 style={{
-                  padding: "12px 16px",
+                  padding: "14px 18px",
                   background: "var(--surface-subtle)",
                   borderBottom: "1px solid var(--line)",
                 }}
               >
-                <strong style={{ fontSize: "14px", display: "block" }}>
-                  {group.title}
-                </strong>
-                <small
-                  style={{
-                    color: "var(--muted)",
-                    display: "block",
-                    marginTop: "3px",
-                  }}
-                >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 650 }}>{group.title}</h3>
+                </div>
+                <p style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: "12px", lineHeight: "1.4" }}>
                   {t("groupIncludes", { models: includedText })}
-                </small>
+                </p>
               </div>
-              <div
-                style={{
-                  padding: "14px 16px",
-                  display: "grid",
-                  gap: "14px",
-                }}
-              >
-                <div class="quota">
-                  <div class="quota-head">
-                    <small style={{ fontWeight: 600 }}>{t("fiveHourLimit")}</small>
-                    <strong style={{ fontSize: "12px" }}>
+
+              {/* Group Body: Pure Vertical Flow */}
+              <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                {/* Five Hour Limit */}
+                <div class="quota" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Five Hour Limit Remaining</span>
+                    <strong style={{ fontSize: "14px", color: fiveHourVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
                       {fiveHourVal < 100
                         ? t("quotaRemainingLabel", {
                             percent: formatPercent(locale, fiveHourVal / 100),
@@ -1047,10 +1065,15 @@ function AntigravityQuotaModal({
                         : t("quotaAvailable")}
                     </strong>
                   </div>
-                  <div class="quota-track">
-                    <i style={{ width: `${fiveHourVal}%` }} />
+                  <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                    <i
+                      style={{
+                        width: `${fiveHourVal}%`,
+                        background: fiveHourVal <= 15 ? "var(--danger)" : "var(--success)",
+                      }}
+                    />
                   </div>
-                  <span class="quota-meta">
+                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
                     {fiveHourReset
                       ? t("resetsInSuffix", {
                           duration: formatUntilReset(locale, fiveHourReset),
@@ -1059,10 +1082,11 @@ function AntigravityQuotaModal({
                   </span>
                 </div>
 
-                <div class="quota">
-                  <div class="quota-head">
-                    <small style={{ fontWeight: 600 }}>{t("weeklyLimit")}</small>
-                    <strong style={{ fontSize: "12px" }}>
+                {/* Weekly Limit */}
+                <div class="quota" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600, fontSize: "13px" }}>Weekly Limit Remaining</span>
+                    <strong style={{ fontSize: "14px", color: weeklyVal < 100 ? "var(--brand-text)" : "var(--success)" }}>
                       {weeklyVal < 100
                         ? t("quotaRemainingLabel", {
                             percent: formatPercent(locale, weeklyVal / 100),
@@ -1070,10 +1094,15 @@ function AntigravityQuotaModal({
                         : t("quotaAvailable")}
                     </strong>
                   </div>
-                  <div class="quota-track">
-                    <i style={{ width: `${weeklyVal}%` }} />
+                  <div class="quota-track" style={{ height: "6px", margin: 0 }}>
+                    <i
+                      style={{
+                        width: `${weeklyVal}%`,
+                        background: weeklyVal <= 15 ? "var(--danger)" : "var(--success)",
+                      }}
+                    />
                   </div>
-                  <span class="quota-meta">
+                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
                     {weeklyReset
                       ? t("resetsInSuffix", {
                           duration: formatUntilReset(locale, weeklyReset),
@@ -1864,22 +1893,27 @@ function SettingsPage({
 
 function Dialogs({ dialog, close, reloadAccounts, reloadKeys, notify }: any) {
   if (!dialog) return null;
-  if (dialog === "import")
-    return (
-      <ImportDialog close={close} reload={reloadAccounts} notify={notify} />
-    );
   if (dialog === "key")
     return <KeyDialog close={close} reload={reloadKeys} notify={notify} />;
-  return (
-    <OAuthDialog
-      mode={dialog === "device" ? "device" : "browser"}
-      close={close}
-      reload={reloadAccounts}
-      notify={notify}
-    />
-  );
+  if (dialog === "add-antigravity")
+    return (
+      <AddAntigravityDialog
+        close={close}
+        reload={reloadAccounts}
+        notify={notify}
+      />
+    );
+  if (dialog === "add-codex")
+    return (
+      <AddCodexDialog
+        close={close}
+        reload={reloadAccounts}
+        notify={notify}
+      />
+    );
+  return null;
 }
-function Modal({ title, subtitle, close, children, footer }: any) {
+function Modal({ title, subtitle, close, children, footer, style }: any) {
   const { t } = useI18n();
   return (
     <div
@@ -1891,6 +1925,7 @@ function Modal({ title, subtitle, close, children, footer }: any) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"
+        style={style}
       >
         <header>
           <div>
@@ -1907,23 +1942,71 @@ function Modal({ title, subtitle, close, children, footer }: any) {
     </div>
   );
 }
-function ImportDialog({ close, reload, notify }: any) {
+function AddAntigravityDialog({ close, reload, notify }: any) {
   const { t } = useI18n();
+  const [method, setMethod] = useState<"oauth" | "json">("oauth");
   const [name, setName] = useState(""),
-    [provider, setProvider] = useState<"codex" | "antigravity">("codex"),
-    [payload, setPayload] = useState("");
-  const submit = async () => {
+    [login, setLogin] = useState<any>(null),
+    [callback, setCallback] = useState(""),
+    [jsonPayload, setJsonPayload] = useState("");
+
+  const startOAuth = async () => {
+    const popup = window.open("about:blank", "antigravityOAuth");
+    if (popup) popup.opener = null;
     try {
-      const body = JSON.parse(payload);
+      const data = await api<any>("/admin/api/oauth/antigravity/start", {
+        method: "POST",
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      setLogin(data.login);
+      if (popup) popup.location.href = data.login.authorizationUrl;
+    } catch (error) {
+      popup?.close();
+      notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
+    }
+  };
+
+  const cancelOAuth = () => {
+    if (login) {
+      api(`/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    }
+    close();
+  };
+
+  const finishOAuth = async () => {
+    if (!login || !callback.trim())
+      return notify(
+        t("antigravityCallbackRequired"),
+        t("antigravityCallbackHelp"),
+        true,
+      );
+    try {
+      await api(`/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`, {
+        method: "POST",
+        body: JSON.stringify({ callbackUrl: callback.trim() }),
+      });
+      await reload();
+      close();
+      notify(t("antigravityAccountAdded"), t("antigravityAccountAddedText"));
+    } catch (error) {
+      notify(t("loginIncomplete"), message(error, t("requestFailed")), true);
+    }
+  };
+
+  const submitJson = async () => {
+    try {
+      const body = JSON.parse(jsonPayload);
       if (name.trim()) body.name = name.trim();
-      if (provider !== "codex") body.provider = provider;
+      body.provider = "antigravity";
       await api("/admin/api/accounts", {
         method: "POST",
         body: JSON.stringify(body),
       });
       await reload();
       close();
-      notify(t("accountImported"), t("accountImportedText"));
+      notify(t("antigravityAccountAdded"), t("antigravityAccountAddedText"));
     } catch (error) {
       notify(
         t("importFailed"),
@@ -1934,48 +2017,100 @@ function ImportDialog({ close, reload, notify }: any) {
       );
     }
   };
+
   return (
     <Modal
-      title={t("importTitle")}
-      subtitle={t("importSubtitle")}
-      close={close}
+      title={t("addAntigravityTitle")}
+      subtitle={t("addAntigravitySubtitle")}
+      close={login ? cancelOAuth : close}
       footer={
-        <>
-          <Button onClick={close}>{t("cancel")}</Button>
-          <Button tone="primary" onClick={submit}>
-            {t("safeImport")}
-          </Button>
-        </>
+        method === "oauth" ? (
+          !login ? (
+            <Button tone="primary" onClick={startOAuth}>
+              {t("continueLogin")}
+            </Button>
+          ) : (
+            <>
+              <Button onClick={cancelOAuth}>{t("cancel")}</Button>
+              <Button tone="primary" onClick={finishOAuth}>
+                {t("finishImport")}
+              </Button>
+            </>
+          )
+        ) : (
+          <>
+            <Button onClick={close}>{t("cancel")}</Button>
+            <Button tone="primary" onClick={submitJson}>
+              {t("safeImport")}
+            </Button>
+          </>
+        )
       }
     >
-      <label>
-        {t("accountProvider")}
-        <select
-          value={provider}
-          onChange={(e) =>
-            setProvider(e.currentTarget.value as "codex" | "antigravity")
-          }
-        >
-          <option value="codex">{t("providerCodex")}</option>
-          <option value="antigravity">{t("providerAntigravity")}</option>
-        </select>
-      </label>
+      {!login && (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+          <button
+            type="button"
+            class={`button ${method === "oauth" ? "primary" : ""}`}
+            onClick={() => setMethod("oauth")}
+          >
+            {t("methodOAuthBrowser")}
+          </button>
+          <button
+            type="button"
+            class={`button ${method === "json" ? "primary" : ""}`}
+            onClick={() => setMethod("json")}
+          >
+            {t("methodManualJson")}
+          </button>
+        </div>
+      )}
+
       <label>
         {t("displayName")}
-        <input value={name} onInput={(e) => setName(e.currentTarget.value)} />
-      </label>
-      <label>
-        {t("credentialsJson")}
-        <textarea
-          value={payload}
-          onInput={(e) => setPayload(e.currentTarget.value)}
-          placeholder={t(
-            provider === "antigravity"
-              ? "antigravityCredentialsPlaceholder"
-              : "codexCredentialsPlaceholder",
-          )}
+        <small>{t("oauthNameHelp")}</small>
+        <input
+          value={name}
+          disabled={!!login}
+          onInput={(e) => setName(e.currentTarget.value)}
         />
       </label>
+
+      {method === "oauth" && login && (
+        <>
+          <label>
+            {t("openVerification")}
+            <a
+              class="button"
+              href={login.authorizationUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t("openVerification")}
+            </a>
+          </label>
+          <label>
+            {t("antigravityCallbackUrl")}
+            <small>{t("antigravityCallbackHelp")}</small>
+            <textarea
+              value={callback}
+              onInput={(e) => setCallback(e.currentTarget.value)}
+              placeholder={t("antigravityCallbackPlaceholder")}
+            />
+          </label>
+        </>
+      )}
+
+      {method === "json" && (
+        <label>
+          {t("credentialsJson")}
+          <textarea
+            value={jsonPayload}
+            onInput={(e) => setJsonPayload(e.currentTarget.value)}
+            placeholder={t("antigravityCredentialsPlaceholder")}
+          />
+        </label>
+      )}
     </Modal>
   );
 }
@@ -2028,22 +2163,21 @@ function KeyDialog({ close, reload, notify }: any) {
     </Modal>
   );
 }
-function OAuthDialog({ mode, close, reload, notify }: any) {
+function AddCodexDialog({ close, reload, notify }: any) {
   const { t } = useI18n();
-  const [provider, setProvider] = useState<"antigravity" | "codex">("antigravity");
+  const [method, setMethod] = useState<"device" | "browser" | "json">("device");
   const [name, setName] = useState(""),
     [login, setLogin] = useState<any>(null),
-    [callback, setCallback] = useState("");
+    [callback, setCallback] = useState(""),
+    [jsonPayload, setJsonPayload] = useState("");
 
   const start = async () => {
-    const popup = window.open("about:blank", "oauthLogin");
+    const popup = window.open("about:blank", "codexLogin");
     if (popup) popup.opener = null;
     const endpoint =
-      mode === "device"
+      method === "device"
         ? "/admin/api/oauth/device/start"
-        : provider === "antigravity"
-          ? "/admin/api/oauth/antigravity/start"
-          : "/admin/api/oauth/browser/start";
+        : "/admin/api/oauth/browser/start";
     try {
       const data = await api<any>(endpoint, {
         method: "POST",
@@ -2052,7 +2186,7 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
       setLogin(data.login);
       if (popup)
         popup.location.href =
-          mode === "device"
+          method === "device"
             ? data.login.verificationUrl
             : data.login.authorizationUrl;
     } catch (error) {
@@ -2062,7 +2196,7 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
   };
 
   useEffect(() => {
-    if (mode !== "device" || !login) return;
+    if (method !== "device" || !login) return;
     const timer = setInterval(
       async () => {
         try {
@@ -2093,80 +2227,123 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
   const cancel = () => {
     if (login) {
       const endpoint =
-        mode === "device"
+        method === "device"
           ? `/admin/api/oauth/device/${encodeURIComponent(login.id)}`
-          : provider === "antigravity"
-            ? `/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`
-            : `/admin/api/oauth/browser/${encodeURIComponent(login.id)}`;
+          : `/admin/api/oauth/browser/${encodeURIComponent(login.id)}`;
       api(endpoint, { method: "DELETE" }).catch(() => {});
     }
     close();
   };
 
-  const finish = async () => {
+  const finishBrowser = async () => {
     if (!login || !callback.trim())
-      return notify(
-        provider === "antigravity" ? t("antigravityCallbackRequired") : t("callbackUrl"),
-        provider === "antigravity" ? t("antigravityCallbackHelp") : t("callbackHelp"),
-        true,
-      );
-    const isAntigravity = provider === "antigravity" || callback.includes("51121");
-    const endpoint = isAntigravity
-      ? `/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`
-      : `/admin/api/oauth/browser/${encodeURIComponent(login.id)}`;
+      return notify(t("callbackUrl"), t("callbackHelp"), true);
     try {
-      await api(endpoint, {
+      await api(`/admin/api/oauth/browser/${encodeURIComponent(login.id)}`, {
         method: "POST",
         body: JSON.stringify({ callbackUrl: callback.trim() }),
       });
       await reload();
       close();
-      if (isAntigravity) {
-        notify(t("antigravityAccountAdded"), t("antigravityAccountAddedText"));
-      } else {
-        notify(t("accountAdded"), t("accountAddedBrowser"));
-      }
+      notify(t("accountAdded"), t("accountAddedBrowser"));
     } catch (error) {
       notify(t("loginIncomplete"), message(error, t("requestFailed")), true);
     }
   };
 
+  const submitJson = async () => {
+    try {
+      const body = JSON.parse(jsonPayload);
+      if (name.trim()) body.name = name.trim();
+      body.provider = "codex";
+      await api("/admin/api/accounts", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      await reload();
+      close();
+      notify(t("accountImported"), t("accountImportedText"));
+    } catch (error) {
+      notify(
+        t("importFailed"),
+        error instanceof SyntaxError
+          ? t("invalidJson")
+          : message(error, t("requestFailed")),
+        true,
+      );
+    }
+  };
+
   return (
     <Modal
-      title={mode === "device" ? t("oauthDeviceTitle") : t("oauthBrowserTitle")}
-      subtitle={
-        mode === "device" ? t("oauthDeviceSubtitle") : t("oauthBrowserSubtitle")
-      }
-      close={cancel}
+      title={t("addCodexTitle")}
+      subtitle={t("addCodexSubtitle")}
+      close={login ? cancel : close}
       footer={
-        !login ? (
-          <Button tone="primary" onClick={start}>
-            {t("continueLogin")}
-          </Button>
-        ) : mode === "browser" ? (
+        method === "device" ? (
+          !login ? (
+            <Button tone="primary" onClick={start}>
+              {t("continueLogin")}
+            </Button>
+          ) : (
+            <span>{t("waitingAuthorization")}</span>
+          )
+        ) : method === "browser" ? (
+          !login ? (
+            <Button tone="primary" onClick={start}>
+              {t("continueLogin")}
+            </Button>
+          ) : (
+            <>
+              <Button onClick={cancel}>{t("cancel")}</Button>
+              <Button tone="primary" onClick={finishBrowser}>
+                {t("finishImport")}
+              </Button>
+            </>
+          )
+        ) : (
           <>
-            <Button onClick={cancel}>{t("cancel")}</Button>
-            <Button tone="primary" onClick={finish}>
-              {t("finishImport")}
+            <Button onClick={close}>{t("cancel")}</Button>
+            <Button tone="primary" onClick={submitJson}>
+              {t("safeImport")}
             </Button>
           </>
-        ) : (
-          <span>{t("waitingAuthorization")}</span>
         )
       }
     >
-      {mode === "browser" && !login && (
-        <label>
-          {t("accountProvider")}
-          <select
-            value={provider}
-            onChange={(e) => setProvider(e.currentTarget.value as "antigravity" | "codex")}
+      {!login && (
+        <div
+          style={{
+            display: "flex",
+            gap: "6px",
+            flexWrap: "wrap",
+            marginBottom: "12px",
+          }}
+        >
+          <button
+            type="button"
+            class={`button ${method === "device" ? "primary" : ""}`}
+            onClick={() => setMethod("device")}
           >
-            <option value="antigravity">{t("providerAntigravity")}</option>
-            <option value="codex">{t("providerCodex")}</option>
-          </select>
-        </label>
+            {t("methodOAuthDevice")}
+          </button>
+          <button
+            type="button"
+            class={`button ${method === "browser" ? "primary" : ""}`}
+            onClick={() => setMethod("browser")}
+          >
+            {t("methodOAuthBrowserCodex")}
+          </button>
+          <button
+            type="button"
+            class={`button ${method === "json" ? "primary" : ""}`}
+            onClick={() => setMethod("json")}
+          >
+            {t("methodManualJson")}
+          </button>
+        </div>
       )}
+
       <label>
         {t("displayName")}
         <small>{t("oauthNameHelp")}</small>
@@ -2176,7 +2353,8 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
           onInput={(e) => setName(e.currentTarget.value)}
         />
       </label>
-      {login && mode === "device" && (
+
+      {method === "device" && login && (
         <>
           <label>
             {t("deviceCode")}
@@ -2202,10 +2380,11 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
           </label>
         </>
       )}
-      {login && mode === "browser" && (
+
+      {method === "browser" && login && (
         <>
           <label>
-            {t("verificationLink")}
+            {t("openVerification")}
             <a
               class="button"
               href={login.authorizationUrl}
@@ -2217,22 +2396,25 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
           </label>
           <label>
             {t("callbackUrl")}
-            <small>
-              {provider === "antigravity"
-                ? t("antigravityCallbackHelp")
-                : t("callbackHelp")}
-            </small>
+            <small>{t("callbackHelp")}</small>
             <textarea
               value={callback}
               onInput={(e) => setCallback(e.currentTarget.value)}
-              placeholder={
-                provider === "antigravity"
-                  ? t("antigravityCallbackPlaceholder")
-                  : t("callbackPlaceholder")
-              }
+              placeholder={t("callbackPlaceholder")}
             />
           </label>
         </>
+      )}
+
+      {method === "json" && (
+        <label>
+          {t("credentialsJson")}
+          <textarea
+            value={jsonPayload}
+            onInput={(e) => setJsonPayload(e.currentTarget.value)}
+            placeholder={t("codexCredentialsPlaceholder")}
+          />
+        </label>
       )}
     </Modal>
   );
