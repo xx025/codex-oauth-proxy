@@ -1,7 +1,70 @@
 import { PoolError } from "./pool";
 
-export const GEMINI_GENERATE_CONTENT_URL =
-  "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse";
+export const ANTIGRAVITY_GENERATE_CONTENT_URL =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse";
+
+export const ANTIGRAVITY_MODELS = [
+  {
+    id: "gemini-2.5-pro",
+    name: "Gemini 2.5 Pro",
+    category: "multimodal",
+  },
+  {
+    id: "gemini-2.5-flash",
+    name: "Gemini 2.5 Flash",
+    category: "fast",
+  },
+  {
+    id: "gemini-3-pro",
+    name: "Gemini 3 Pro",
+    category: "multimodal",
+  },
+  {
+    id: "gemini-2.0-flash",
+    name: "Gemini 2.0 Flash",
+    category: "fast",
+  },
+  {
+    id: "gemini-1.5-pro",
+    name: "Gemini 1.5 Pro",
+    category: "multimodal",
+  },
+  {
+    id: "gemini-1.5-flash",
+    name: "Gemini 1.5 Flash",
+    category: "fast",
+  },
+  {
+    id: "claude-3-7-sonnet",
+    name: "Claude 3.7 Sonnet",
+    category: "reasoning",
+  },
+  {
+    id: "claude-3-5-sonnet",
+    name: "Claude 3.5 Sonnet",
+    category: "multimodal",
+  },
+] as const;
+
+export function antigravityModelEntries(): JsonObject[] {
+  return ANTIGRAVITY_MODELS.map((item) => ({
+    id: item.id,
+    object: "model",
+    created: 1725000000,
+    owned_by: "google",
+    name: item.name,
+    base_model: item.id,
+    family: "antigravity",
+    vendor: item.id.startsWith("claude") ? "Anthropic" : "Google",
+    category: item.category,
+    supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+    capabilities: {
+      tools: true,
+      vision: true,
+      streaming: true,
+    },
+  }));
+}
 
 const MAX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
 const MAX_BUFFERED_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -21,7 +84,7 @@ export function prepareGeminiRequest(
 ): GeminiPreparedRequest {
   const requestedModel = stringValue(body.model).trim();
   const model = requestedModel;
-  if (!model) throw new PoolError(400, "A Gemini CLI model is required");
+  if (!model) throw new PoolError(400, "A model is required");
   rejectUnsupported(body, kind);
   const converted =
     kind === "responses" ? responsesContents(body) : chatContents(body);
@@ -41,27 +104,31 @@ export function prepareGeminiRequest(
   return { model, request };
 }
 
-export function geminiRequestBody(
+export function antigravityRequestBody(
   prepared: GeminiPreparedRequest,
   project: string,
+  sessionId: string,
 ): Uint8Array {
   if (!project.trim())
-    throw new PoolError(503, "Selected Gemini CLI account has no project");
+    throw new PoolError(503, "Selected Antigravity account has no project");
+  const imageModel = prepared.model.toLowerCase().includes("image");
   return encoder.encode(
     JSON.stringify({
-      model: prepared.model,
+      requestId: `agent-${crypto.randomUUID()}`,
+      requestType: imageModel ? "image_gen" : "agent",
+      userAgent: "antigravity",
       project: project.trim(),
-      request: prepared.request,
+      model: prepared.model,
+      request: { ...prepared.request, sessionId },
     }),
   );
 }
 
-export function geminiHeaders(accessToken: string): Headers {
+export function antigravityHeaders(accessToken: string): Headers {
   return new Headers({
-    accept: "text/event-stream",
     authorization: `Bearer ${stripBearer(accessToken)}`,
     "content-type": "application/json",
-    "user-agent": "GeminiCLI/1.0 (Cloudflare Workers)",
+    "user-agent": "antigravity/hub/2.9.1 darwin/arm64",
   });
 }
 

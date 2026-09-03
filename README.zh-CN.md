@@ -4,9 +4,9 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
-把 ChatGPT OAuth 和 Gemini CLI 账号路由为运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
+把 ChatGPT OAuth 和 Antigravity 账号路由为运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
 
-可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，上游访问由 ChatGPT OAuth 账号统一管理。
+可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，上游访问由 ChatGPT 和 Antigravity 账号统一管理。
 
 > 本项目使用非官方上游接口。请只使用自己有权控制的账号，并遵守相关条款。
 
@@ -21,7 +21,7 @@
 
 - OpenAI 兼容 API
 - ChatGPT OAuth 登录和账号导入
-- Gemini CLI 凭据导入、Token 自动刷新和 Code Assist 路由
+- Antigravity OAuth 登录、凭据导入、Token 自动刷新和 Code Assist 路由
 - 多账号轮询、刷新、冷却和故障转移
 - 支持流式和非流式响应
 - 内置管理面板、客户端 API Key 和请求统计
@@ -52,9 +52,9 @@ Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输�
 
 ## 使用
 
-部署后打开 Worker 地址，添加 ChatGPT OAuth 账号，然后创建客户端 API Key。
+部署后打开 Worker 地址，添加账号，然后创建客户端 API Key。
 
-如需添加 Gemini，请先在可信电脑上使用官方 Gemini CLI 登录，然后在账号导入弹窗中选择 `Gemini CLI`，粘贴 `~/.gemini/oauth_creds.json` 的内容。ECRelay 会自动发现 Code Assist Project，并在过期前刷新 Google Token。
+如需添加 Antigravity（Gemini / Claude 系列模型），在管理页面点击 **复制链接登录** 并选择 `Antigravity`。如使用手动导入，请在导入弹窗中选择 `Antigravity`。ECRelay 会自动发现 Code Assist Project，并在过期前自动刷新 Google Token。
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -63,7 +63,7 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-Gemini 模型直接使用 Google 原始模型 ID，不需要额外前缀：
+Antigravity 系列模型直接使用标准模型 ID，不需要额外前缀：
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -72,7 +72,7 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-Gemini CLI 支持使用 Code Assist 的 `v1internal` 服务，而不是公开 Gemini API。请将其视为实验性功能，并且只使用你有权控制的账号。
+Antigravity 支持使用 Code Assist 的 `v1internal` 服务，而不是公开 API。请将其视为实验性功能，并且只使用你有权控制的账号。
 
 ## 本地开发
 

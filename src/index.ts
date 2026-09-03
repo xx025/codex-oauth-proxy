@@ -13,15 +13,14 @@ import {
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { createUpstreamFetch } from "./egress";
 import { RequestMetadata, emptyTokenUsage, readTokenUsage } from "./metrics";
-import { finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, SelectedUpstreamAccount } from "./api";
+import { antigravityModelCatalog, finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, SelectedUpstreamAccount } from "./api";
 import { handleMcp } from "./mcp";
 import {
-  GeminiAuthorizationInput,
-  GeminiLoginSession,
-  beginGeminiLogin,
-  completeGeminiLogin,
-  publicGeminiLogin,
-} from "./gemini-auth";
+  AntigravityLoginSession,
+  beginAntigravityLogin,
+  completeAntigravityLogin,
+  publicAntigravityLogin,
+} from "./antigravity-auth";
 
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace<AccountPool>;
@@ -147,12 +146,12 @@ export class AccountPool extends DurableObject<Env> {
         await this.ctx.storage.put(this.browserLoginKey(session.id), session);
         return json({ login: publicBrowserLogin(session) }, 201);
       }
-      if (url.pathname === "/oauth/gemini/start" && request.method === "POST") {
+      if (url.pathname === "/oauth/antigravity/start" && request.method === "POST") {
         const { name } = await request.json() as { name?: string };
-        await this.pruneGeminiLogins();
-        const session = await beginGeminiLogin(Date.now, name);
-        await this.ctx.storage.put(this.geminiLoginKey(session.id), session);
-        return json({ login: publicGeminiLogin(session) }, 201);
+        await this.pruneAntigravityLogins();
+        const session = beginAntigravityLogin(Date.now, name);
+        await this.ctx.storage.put(this.antigravityLoginKey(session.id), session);
+        return json({ login: publicAntigravityLogin(session) }, 201);
       }
       const browserMatch = url.pathname.match(/^\/oauth\/browser\/([0-9a-f-]+)$/i);
       if (browserMatch && request.method === "POST") {
@@ -191,22 +190,30 @@ export class AccountPool extends DurableObject<Env> {
         await this.ctx.storage.delete(this.deviceLoginKey(deviceMatch[1]));
         return json({ ok: true });
       }
-      const geminiMatch = url.pathname.match(/^\/oauth\/gemini\/([0-9a-f-]+)$/i);
-      if (geminiMatch && request.method === "POST") {
-        const key = this.geminiLoginKey(geminiMatch[1]);
-        const session = await this.ctx.storage.get<GeminiLoginSession>(key);
-        if (!session) throw new PoolError(404, "Gemini login session not found");
-        const credentials = await completeGeminiLogin(
+      const antigravityMatch = url.pathname.match(/^\/oauth\/antigravity\/([0-9a-f-]+)$/i);
+      if (antigravityMatch && request.method === "POST") {
+        const key = this.antigravityLoginKey(antigravityMatch[1]);
+        const session = await this.ctx.storage.get<AntigravityLoginSession>(key);
+        if (!session) throw new PoolError(404, "Antigravity login session not found");
+        const { callbackUrl = "" } = await request.json() as { callbackUrl?: string };
+        const credentials = await completeAntigravityLogin(
           session,
-          await request.json() as GeminiAuthorizationInput,
+          callbackUrl,
           (input, init) => this.fetchUpstream(input, init),
         );
-        const account = await this.core.importAccount(credentials);
+        const account = await this.core.importAccount(credentials).catch(async (error) => {
+          await this.ctx.storage.delete(key);
+          const detail = error instanceof Error ? error.message : "Antigravity setup failed";
+          throw new PoolError(
+            error instanceof PoolError ? error.status : 502,
+            `${detail}. The authorization code has already been consumed; start Antigravity sign-in again before retrying`,
+          );
+        });
         await this.ctx.storage.delete(key);
         return json({ status: "complete", account });
       }
-      if (geminiMatch && request.method === "DELETE") {
-        await this.ctx.storage.delete(this.geminiLoginKey(geminiMatch[1]));
+      if (antigravityMatch && request.method === "DELETE") {
+        await this.ctx.storage.delete(this.antigravityLoginKey(antigravityMatch[1]));
         return json({ ok: true });
       }
       const resetMatch = url.pathname.match(/^\/accounts\/([^/]+)\/reset$/);
@@ -275,8 +282,8 @@ export class AccountPool extends DurableObject<Env> {
     return `browser-login:${id}`;
   }
 
-  private geminiLoginKey(id: string): string {
-    return `gemini-login:${id}`;
+  private antigravityLoginKey(id: string): string {
+    return `antigravity-login:${id}`;
   }
 
   private async pruneDeviceLogins(): Promise<void> {
@@ -295,9 +302,9 @@ export class AccountPool extends DurableObject<Env> {
     if (expired.length) await this.ctx.storage.delete(expired);
   }
 
-  private async pruneGeminiLogins(): Promise<void> {
-    const sessions = await this.ctx.storage.list<GeminiLoginSession>({
-      prefix: "gemini-login:",
+  private async pruneAntigravityLogins(): Promise<void> {
+    const sessions = await this.ctx.storage.list<AntigravityLoginSession>({
+      prefix: "antigravity-login:",
     });
     const expired = [...sessions.entries()]
       .filter(([, session]) => session.expiresAt <= Date.now())
@@ -412,7 +419,7 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
 
   const settings = await loadPoolSettings(env);
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await readRequestBody(request);
-  const prepared = prepareProxyRequest(url.pathname, requestBody, { serviceTier: settings.serviceTier });
+  let prepared = prepareProxyRequest(url.pathname, requestBody, { serviceTier: settings.serviceTier });
   const metadata: RequestMetadata = { model: prepared.model, endpoint: url.pathname.slice(0, 80), streaming: prepared.streaming };
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
@@ -426,6 +433,12 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
       if (lastAttempt) return trackRequestResponse(
         stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt,
       );
+      if (modelCatalogRequest && error instanceof PoolError && error.status === 503) {
+        const catalogResponse = Response.json(antigravityModelCatalog());
+        const cachedBody = JSON.stringify(antigravityModelCatalog());
+        ctx.waitUntil(putModelCatalogCache(env, catalogResponse, cachedBody));
+        return trackRequestResponse(catalogResponse, env, ctx, metadata, "antigravity-catalog", startedAt);
+      }
       throw error;
     }
     excluded.push(account.id);

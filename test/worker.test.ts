@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProxyExecutor, worker } from "../src/index";
-import { RequestRecordInput } from "../src/pool";
+import { AccountProvider, RequestRecordInput } from "../src/pool";
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
 function context() {
@@ -27,6 +27,26 @@ function responsesStream(text = "ok", usage: {
   return new Response(events.join(""), { headers: { "content-type": "text/event-stream" } });
 }
 
+function geminiStream(text = "gemini ok"): Response {
+  return new Response(
+    `data: ${JSON.stringify({
+      response: {
+        candidates: [{
+          content: { parts: [{ text: "thinking", thought: true }, { text }] },
+          finishReason: "STOP",
+        }],
+        usageMetadata: {
+          promptTokenCount: 3,
+          candidatesTokenCount: 2,
+          thoughtsTokenCount: 1,
+          totalTokenCount: 6,
+        },
+      },
+    })}\n\n`,
+    { headers: { "content-type": "text/event-stream" } },
+  );
+}
+
 function modelsPayload(slug: string) {
   return { models: [{ slug, display_name: slug, visibility: "list", supported_reasoning_levels: [{ effort: "low" }] }] };
 }
@@ -34,6 +54,7 @@ function modelsPayload(slug: string) {
 function environment(options: {
   upstream: (request: Request) => Promise<Response>;
   accountIds?: string[];
+  providerAccountIds?: Partial<Record<AccountProvider, string[]>>;
   settings?: Partial<{
     selectionStrategy: "round_robin" | "least_failures";
     maxAccountAttempts: number;
@@ -45,18 +66,31 @@ function environment(options: {
   }>;
 }) {
   const accountIds = options.accountIds ?? ["a"];
+  const providerAccountIds = options.providerAccountIds ?? { codex: accountIds };
   const reports: Array<{ id: string; status: number }> = [];
   const records: RequestRecordInput[] = [];
+  const selections: AccountProvider[] = [];
   let modelCatalogCache: { status: number; body: string; contentType?: string; expiresAt: number; createdAt: number } | undefined;
   const stub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
       if (url.pathname === "/select") {
-        const { excluded } = await request.json() as { excluded: string[] };
-        const id = accountIds.find((candidate) => !excluded.includes(candidate));
+        const { excluded, provider = "codex" } = await request.json() as {
+          excluded: string[];
+          provider?: AccountProvider;
+        };
+        selections.push(provider);
+        const id = (providerAccountIds[provider] ?? []).find(
+          (candidate) => !excluded.includes(candidate),
+        );
         if (!id) return Response.json({ error: "No healthy accounts available" }, { status: 503 });
-        return Response.json({ account: { id, accountId: `upstream-${id}`, accessToken: `token-${id}` } });
+        return Response.json({ account: {
+          id,
+          accountId: provider === "codex" ? `upstream-${id}` : undefined,
+          projectId: provider === "codex" ? undefined : `project-${id}`,
+          accessToken: `token-${id}`,
+        } });
       }
       if (url.pathname === "/report") {
         reports.push(await request.json() as { id: string; status: number });
@@ -143,6 +177,7 @@ function environment(options: {
   return {
     reports,
     records,
+    selections,
     executorShards,
     env,
   };
@@ -314,8 +349,23 @@ describe("edge worker", () => {
     await Promise.all(waits);
 
     expect(response.status).toBe(200);
-    const catalog = await response.json() as { data: Array<{ id: string; object: string }> };
-    expect(catalog.data[0]).toMatchObject({ id: "gpt-5.6-sol", object: "model" });
+    const catalog = await response.json() as { data: Array<{ id: string; object: string; family?: string }> };
+    expect(catalog.data.some((m) => m.id === "gpt-5.6-sol")).toBe(true);
+    expect(catalog.data.some((m) => m.id === "gemini-2.5-pro" && m.family === "antigravity")).toBe(true);
+  });
+
+  it("serves Antigravity models when only Antigravity accounts are configured", async () => {
+    const { env } = environment({
+      upstream: vi.fn(),
+      providerAccountIds: { antigravity: ["ag-1"] },
+    });
+    const response = await worker.fetch(new Request("https://example.test/admin/api/models", {
+      headers: { authorization: "Bearer admin-secret" },
+    }), env as never, context().ctx);
+    expect(response.status).toBe(200);
+    const catalog = await response.json() as { data: Array<{ id: string; family?: string }> };
+    expect(catalog.data.some((m) => m.id === "gemini-2.5-pro" && m.family === "antigravity")).toBe(true);
+    expect(catalog.data.some((m) => m.id === "gemini-2.5-flash")).toBe(true);
   });
 
   it("caches successful model catalogs and refreshes them on demand", async () => {
@@ -376,6 +426,86 @@ describe("edge worker", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ model: "gpt-5.5", endpoint: "/v1/responses", status: 200, accountId: "b" });
     expect(await response.json()).toMatchObject({ id: "resp_test", output: [{ type: "message" }] });
+  });
+
+  it("prefers Antigravity for Gemini models and converts its response", async () => {
+    const upstream = vi.fn(async (request: Request) => {
+      expect(request.url).toBe(
+        "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+      );
+      expect(request.headers.get("authorization")).toBe("Bearer token-ag");
+      expect(request.headers.get("content-type")).toBe("application/json");
+      expect(request.headers.get("user-agent")).toBe(
+        "antigravity/hub/2.9.1 darwin/arm64",
+      );
+      expect(request.headers.get("x-goog-api-client")).toBeNull();
+      const payload = await request.json() as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        requestId: expect.stringMatching(/^agent-[0-9a-f-]+$/),
+        requestType: "agent",
+        userAgent: "antigravity",
+        project: "project-ag",
+        model: "gemini-2.5-pro",
+        request: {
+          contents: [{ role: "user", parts: [{ text: "hello" }] }],
+          sessionId: "body-session",
+        },
+      });
+      return geminiStream();
+    });
+    const { env, selections } = environment({
+      upstream,
+      providerAccountIds: {
+        antigravity: ["ag"],
+      },
+    });
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer proxy-secret",
+        "content-type": "application/json",
+        "x-session-id": "header-session",
+      },
+      body: JSON.stringify({
+        model: "gemini-2.5-pro",
+        input: "hello",
+        session_id: "body-session",
+      }),
+    }), env as never, context().ctx);
+
+    expect(response.status).toBe(200);
+    expect(selections).toEqual(["antigravity"]);
+    expect(await response.json()).toMatchObject({
+      object: "response",
+      model: "gemini-2.5-pro",
+      output: [
+        { type: "reasoning", summary: [{ text: "thinking" }] },
+        { type: "message", content: [{ text: "gemini ok" }] },
+      ],
+    });
+  });
+
+  it("handles consecutive Antigravity retries across accounts", async () => {
+    const upstream = vi.fn(async () => new Response("limited", { status: 429 }));
+    const { env, selections } = environment({
+      upstream,
+      providerAccountIds: {
+        antigravity: ["ag-a", "ag-b"],
+      },
+    });
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gemini-2.5-pro", input: "hello" }),
+    }), env as never, context().ctx);
+
+    expect(response.status).toBe(429);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect(selections).toEqual([
+      "antigravity",
+      "antigravity",
+      "antigravity",
+    ]);
   });
 
   it("handles large non-streaming Responses requests without Wasm", async () => {

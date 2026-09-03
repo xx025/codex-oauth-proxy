@@ -67,11 +67,11 @@ describe("Cloudflare-native API proxy", () => {
       }),
     );
     expect(prepared).toMatchObject({
-      provider: "gemini-cli",
+      provider: "antigravity",
       kind: "responses",
       model: "gemini-2.5-pro",
       streaming: false,
-      upstreamUrl: "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+      upstreamUrl: "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
     });
     const request = JSON.parse(new TextDecoder().decode(prepared.body));
     expect(request).toMatchObject({
@@ -88,16 +88,24 @@ describe("Cloudflare-native API proxy", () => {
     ]);
 
     const selected = prepareSelectedUpstreamRequest(
-      new Request("https://relay/v1/responses"),
+      new Request("https://relay/v1/responses", {
+        headers: { "x-session-id": "session-from-header" },
+      }),
       prepared,
       { accessToken: "Bearer token", projectId: "project-1" },
     );
     expect(selected.url).toBe(prepared.upstreamUrl);
     expect(new Headers(selected.init.headers).get("authorization")).toBe("Bearer token");
-    expect(JSON.parse(new TextDecoder().decode(selected.init.body as Uint8Array))).toEqual({
-      model: "gemini-2.5-pro",
+    const selectedHeaders = new Headers(selected.init.headers);
+    expect(selectedHeaders.get("user-agent")).toBe("antigravity/hub/2.9.1 darwin/arm64");
+    expect(selectedHeaders.has("x-goog-api-client")).toBe(false);
+    expect(JSON.parse(new TextDecoder().decode(selected.init.body as Uint8Array))).toMatchObject({
+      requestId: expect.stringMatching(/^agent-[0-9a-f-]+$/),
+      requestType: "agent",
+      userAgent: "antigravity",
       project: "project-1",
-      request,
+      model: "gemini-2.5-pro",
+      request: { ...request, sessionId: "session-from-header" },
     });
   });
 
@@ -113,7 +121,11 @@ describe("Cloudflare-native API proxy", () => {
       ],
     }));
     const request = JSON.parse(new TextDecoder().decode(prepared.body));
-    expect(prepared).toMatchObject({ provider: "gemini-cli", kind: "chat", streaming: true });
+    expect(prepared).toMatchObject({
+      provider: "antigravity",
+      kind: "chat",
+      streaming: true,
+    });
     expect(request.contents.map((content: { role: string }) => content.role)).toEqual(["user", "model", "user"]);
     expect(request.contents[2]).toMatchObject({
       parts: [{ functionResponse: { id: "c1", name: "weather", response: { output: "sunny" } } }],

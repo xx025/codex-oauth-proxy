@@ -4,9 +4,9 @@ English | [简体中文](README.zh-CN.md)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
-Route ChatGPT OAuth and Gemini CLI accounts through an OpenAI-compatible API on Cloudflare Workers.
+Route ChatGPT OAuth and Antigravity accounts through an OpenAI-compatible API on Cloudflare Workers.
 
-Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mcp` while managing upstream access with ChatGPT OAuth accounts.
+Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mcp` while managing upstream access with ChatGPT and Antigravity accounts.
 
 > This project uses an unofficial upstream interface. Use only accounts you control and follow the applicable terms.
 
@@ -21,7 +21,7 @@ Do not enter private information, personal tokens, production API keys, or accou
 
 - OpenAI-compatible API endpoints
 - ChatGPT OAuth login and account import
-- Gemini CLI credential import, token refresh, and Code Assist routing
+- Antigravity OAuth login, credential import, token refresh, and Code Assist routing
 - Multi-account rotation, refresh, cooldown, and failover
 - Streaming and non-streaming responses
 - Built-in admin UI, client API keys, and request statistics
@@ -52,9 +52,9 @@ See [docs/deployment.md](docs/deployment.md) for the full deployment guide.
 
 ## Use
 
-After deployment, open the Worker URL, add a ChatGPT OAuth account, and create a client API key.
+After deployment, open the Worker URL, add an account, and create a client API key.
 
-To add Gemini, sign in with the official Gemini CLI on a trusted computer and import the contents of `~/.gemini/oauth_creds.json` from the account import dialog. Select `Gemini CLI` as the provider. ECRelay discovers the Code Assist project and refreshes the Google token automatically.
+To add Antigravity (Gemini / Claude models), use **Copy-link sign in** in the admin UI and select `Antigravity`. For manual import, select `Antigravity` as the provider. ECRelay discovers the Code Assist project and refreshes the Google token automatically.
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -63,7 +63,7 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Gemini models use their normal Google model IDs without a custom prefix:
+Antigravity models use standard model IDs without custom prefixes:
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -72,7 +72,7 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-Gemini CLI support uses the Code Assist `v1internal` service rather than the public Gemini API. Treat it as experimental and use only accounts you control.
+Antigravity support uses the Code Assist `v1internal` service rather than public API endpoints. Treat it as experimental and use only accounts you control.
 
 ## Local Development
 

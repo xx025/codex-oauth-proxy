@@ -22,7 +22,7 @@ export type ModelMetadata = {
   };
 };
 
-type ModelFamily = "codex" | "gpt" | "reasoning" | "other";
+type ModelFamily = "antigravity" | "codex" | "gpt" | "reasoning" | "other";
 type ModelGroup = {
   family: ModelFamily;
   models: Array<ModelMetadata & { reasoning_efforts: string[] }>;
@@ -133,7 +133,7 @@ export function groupModels(models: ModelMetadata[]): ModelGroup[] {
     const family = inferModelFamily(model);
     families.set(family, [...(families.get(family) || []), model]);
   }
-  const order: ModelFamily[] = ["codex", "gpt", "reasoning", "other"];
+  const order: ModelFamily[] = ["antigravity", "codex", "gpt", "reasoning", "other"];
   return order
     .filter((family) => families.has(family))
     .map((family) => ({
@@ -151,6 +151,8 @@ export function modelVariantId(model: Pick<ModelMetadata, "id" | "base_model">, 
 function inferModelFamily(model: ModelMetadata): ModelFamily {
   const value =
     `${model.family || ""} ${model.category || ""} ${model.base_model || ""} ${model.id}`.toLowerCase();
+  if (value.includes("antigravity") || value.includes("gemini") || value.includes("claude"))
+    return "antigravity";
   if (value.includes("codex")) return "codex";
   if (/\bgpt[- ]?\d/.test(value)) return "gpt";
   if (/\b(?:o1|o3|o4)(?:\b|-)/.test(value) || value.includes("reasoning"))

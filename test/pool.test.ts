@@ -54,6 +54,76 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("AccountPoolCore", () => {
+  it("refreshes Antigravity quota from daily fetchAvailableModels", async () => {
+    const storage = new MemoryStorage();
+    storage.value = {
+      cursor: 0,
+      accounts: [{
+        provider: "antigravity",
+        id: "ag",
+        name: "Antigravity",
+        enabled: true,
+        accessToken: "access",
+        refreshToken: "refresh",
+        expiresAt: 10_000_000,
+        projectId: "project-id",
+        email: "user@example.com",
+        principalId: "google-id",
+        createdAt: 1,
+        updatedAt: 1,
+        cooldownUntil: 0,
+        failureCount: 0,
+      }],
+    };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels");
+      expect(new Headers(init?.headers).get("user-agent")).toBe("antigravity/hub/2.9.1 darwin/arm64");
+      expect(JSON.parse(String(init?.body))).toEqual({ project: "project-id" });
+      return Response.json({
+        models: {
+          "gemini-3-pro": { quotaInfo: { remainingFraction: 0.42, resetTime: "2026-09-04T00:00:00Z" } },
+          ignored: {},
+        },
+      });
+    });
+    const [account] = await new AccountPoolCore(storage, fetcher, () => 1_000).refreshUsage();
+    expect(account.provider).toBe("antigravity");
+    expect(account.projectId).toBe("project-id");
+    expect(account.usage?.geminiModels).toEqual([
+      expect.objectContaining({ modelId: "gemini-3-pro", remainingPercent: 42 }),
+    ]);
+    expect(account).not.toHaveProperty("accessToken");
+    expect(account).not.toHaveProperty("refreshToken");
+    await expect(new AccountPoolCore(storage, fetcher).reset("ag"))
+      .rejects.toMatchObject({ status: 409 });
+  });
+
+  it("dispatches Antigravity refresh and retains its refresh token", async () => {
+    const storage = new MemoryStorage();
+    storage.value = {
+      cursor: 0,
+      accounts: [{
+        provider: "antigravity", id: "ag", name: "AG", enabled: true,
+        accessToken: "old-access", refreshToken: "keep-refresh", expiresAt: 0,
+        projectId: "project-id", principalId: "user", createdAt: 1, updatedAt: 1,
+        cooldownUntil: 0, failureCount: 0,
+      }],
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ access_token: "new-access", expires_in: 3600 }))
+      .mockResolvedValueOnce(Response.json({
+        models: { model: { quotaInfo: { remainingFraction: 0.9 } } },
+      }));
+    await new AccountPoolCore(storage, fetcher as unknown as typeof fetch, () => 1_000).refreshUsage();
+    expect(String(fetcher.mock.calls[0][0])).toBe("https://oauth2.googleapis.com/token");
+    expect(String(fetcher.mock.calls[1][0])).toContain("daily-cloudcode-pa.googleapis.com");
+    expect(storage.value?.accounts[0]).toMatchObject({
+      accessToken: "new-access",
+      refreshToken: "keep-refresh",
+    });
+  });
+
   it("persists validated routing and cooldown settings", async () => {
     const storage = new MemoryStorage();
     const pool = new AccountPoolCore(storage);
@@ -207,161 +277,6 @@ describe("AccountPoolCore", () => {
     expect((await new AccountPoolCore(storage).list())[0].accountId).toBe("a");
   });
 
-  it("imports Gemini CLI credentials and discovers the Code Assist project", async () => {
-    const storage = new MemoryStorage();
-    const upstream = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe(
-        "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-      );
-      return Response.json({ cloudaicompanionProject: "managed-project" });
-    });
-    const pool = new AccountPoolCore(
-      storage,
-      upstream as typeof fetch,
-      () => 1_000,
-    );
-
-    const account = await pool.importAccount(
-      parseImportPayload({
-        provider: "gemini-cli",
-        access_token: "google-access",
-        refresh_token: "google-refresh",
-        expiry_date: 10_000_000,
-        email: "USER@EXAMPLE.COM",
-        principalId: "google-user",
-      }),
-    );
-
-    expect(account).toMatchObject({
-      provider: "gemini-cli",
-      projectId: "managed-project",
-      email: "user@example.com",
-      principalId: "google-user",
-    });
-    expect(account).not.toHaveProperty("accountId");
-    expect(account).not.toHaveProperty("accessToken");
-    expect(account).not.toHaveProperty("refreshToken");
-    expect(storage.value?.accounts[0]).toMatchObject({
-      accessToken: "google-access",
-      refreshToken: "google-refresh",
-      projectId: "managed-project",
-    });
-  });
-
-  it("refreshes expiring Gemini credentials and retains an omitted refresh token", async () => {
-    const storage = new MemoryStorage();
-    const upstream = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({ access_token: "new-google-access", expires_in: 3600 }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ cloudaicompanionProject: "managed-project" }),
-      );
-    const pool = new AccountPoolCore(
-      storage,
-      upstream as unknown as typeof fetch,
-      () => 1_000_000,
-    );
-
-    await pool.importAccount({
-      provider: "gemini-cli",
-      accessToken: "old-google-access",
-      refreshToken: "old-google-refresh",
-      expiresAt: 1_000_001,
-      email: "user@example.com",
-      principalId: "google-user",
-    });
-
-    const tokenRequest = upstream.mock.calls[0];
-    expect(tokenRequest[0]).toBe("https://oauth2.googleapis.com/token");
-    expect(String(tokenRequest[1]?.body)).toContain(
-      "refresh_token=old-google-refresh",
-    );
-    expect(storage.value?.accounts[0]).toMatchObject({
-      accessToken: "new-google-access",
-      refreshToken: "old-google-refresh",
-      expiresAt: 4_600_000,
-    });
-  });
-
-  it("onboards the official default Gemini tier and polls its operation", async () => {
-    const storage = new MemoryStorage();
-    const upstream = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({ allowedTiers: [{ id: "free-tier", isDefault: true }] }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ name: "operations/setup", done: false }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          done: true,
-          response: { cloudaicompanionProject: { id: "onboarded-project" } },
-        }),
-      );
-    const pool = new AccountPoolCore(
-      storage,
-      upstream as unknown as typeof fetch,
-      () => 1_000,
-    );
-
-    const account = await pool.importAccount({
-      provider: "gemini-cli",
-      accessToken: "google-access",
-      refreshToken: "google-refresh",
-      expiresAt: 10_000_000,
-      email: "user@example.com",
-      principalId: "google-user",
-    });
-
-    expect(account.projectId).toBe("onboarded-project");
-    expect(upstream.mock.calls.map((call) => String(call[0]))).toEqual([
-      "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-      "https://cloudcode-pa.googleapis.com/v1internal:onboardUser",
-      "https://cloudcode-pa.googleapis.com/v1internal/operations/setup",
-    ]);
-    expect(JSON.parse(String(upstream.mock.calls[1][1]?.body))).toMatchObject({
-      tierId: "free-tier",
-      metadata: { pluginType: "GEMINI" },
-    });
-  });
-
-  it("reloads Code Assist when onboarding omits its project", async () => {
-    const storage = new MemoryStorage();
-    const upstream = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({ allowedTiers: [{ id: "free-tier", isDefault: true }] }),
-      )
-      .mockResolvedValueOnce(Response.json({ done: true, response: {} }))
-      .mockResolvedValueOnce(
-        Response.json({ cloudaicompanionProject: "eventual-project" }),
-      );
-    const pool = new AccountPoolCore(
-      storage,
-      upstream as unknown as typeof fetch,
-      () => 1_000,
-    );
-
-    const account = await pool.importAccount({
-      provider: "gemini-cli",
-      accessToken: "google-access",
-      refreshToken: "google-refresh",
-      expiresAt: 10_000_000,
-      email: "user@example.com",
-      principalId: "google-user",
-    });
-
-    expect(account.projectId).toBe("eventual-project");
-    expect(upstream.mock.calls.map((call) => String(call[0]))).toEqual([
-      "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-      "https://cloudcode-pa.googleapis.com/v1internal:onboardUser",
-      "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-    ]);
-  });
-
   it("filters selection by provider and defaults legacy records to Codex", async () => {
     const storage = new MemoryStorage();
     const legacy = {
@@ -376,7 +291,7 @@ describe("AccountPoolCore", () => {
     } as AccountRecord;
     storage.value = { accounts: [legacy], cursor: 0 };
     const upstream = vi.fn(async () =>
-      Response.json({ cloudaicompanionProject: "project" }),
+      Response.json({ id: "google-user", email: "user@example.com" }),
     );
     const pool = new AccountPoolCore(
       storage,
@@ -384,7 +299,7 @@ describe("AccountPoolCore", () => {
       () => 1_000,
     );
     await pool.importAccount({
-      provider: "gemini-cli",
+      provider: "antigravity",
       accessToken: "google-access",
       refreshToken: "google-refresh",
       expiresAt: 10_000_000,
@@ -394,34 +309,34 @@ describe("AccountPoolCore", () => {
     });
 
     expect((await pool.select()).id).toBe("legacy-id");
-    expect((await pool.select([], "gemini-cli")).projectId).toBe("project");
+    expect((await pool.select([], "antigravity")).projectId).toBe("project");
     expect((await pool.list())[0].provider).toBe("codex");
   });
 
-  it("does not refresh usage or reset quota for Gemini accounts", async () => {
+  it("uses Antigravity quota for weighted selection without automatic reset", async () => {
     const storage = new MemoryStorage();
-    const upstream = vi.fn(async () =>
-      Response.json({ cloudaicompanionProject: "project" }),
-    );
-    const pool = new AccountPoolCore(
-      storage,
-      upstream as typeof fetch,
-      () => 1_000,
-    );
-    const account = await pool.importAccount({
-      provider: "gemini-cli",
-      accessToken: "google-access",
-      refreshToken: "google-refresh",
-      expiresAt: 10_000_000,
-      projectId: "project",
-      email: "user@example.com",
-      principalId: "google-user",
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const project = JSON.parse(String(init?.body)).project;
+      const remainingFraction = project === "high-project" ? 0.9 : 0.1;
+      return Response.json({
+        models: {
+          "gemini-2.5-pro": { quotaInfo: { remainingFraction, resetTime: "2026-09-03T05:00:00Z" } },
+        },
+      });
     });
-    upstream.mockClear();
+    const pool = new AccountPoolCore(storage, upstream as typeof fetch, () => 3_600_000);
+    for (const projectId of ["low-project", "high-project"]) {
+      await pool.importAccount({
+        provider: "antigravity", accessToken: `access-${projectId}`, refreshToken: "refresh",
+        expiresAt: 10_000_000, projectId, principalId: projectId, email: `${projectId}@example.com`,
+      });
+    }
+    await pool.updateSettings({ selectionStrategy: "quota_weighted", autoResetExhaustedAccounts: true });
 
-    await pool.refreshUsage();
-    await expect(pool.reset(account.id)).rejects.toMatchObject({ status: 409 });
-    expect(upstream).not.toHaveBeenCalled();
+    expect((await pool.select([], "antigravity")).projectId).toBe("high-project");
+    expect(upstream.mock.calls.map((call) => String(call[0]))).not.toContain(
+      "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume",
+    );
   });
 
   it("round-robins enabled healthy accounts", async () => {
@@ -921,10 +836,10 @@ describe("parseImportPayload", () => {
     ).toBe("codex");
   });
 
-  it("accepts Gemini CLI oauth_creds aliases with an explicit provider", () => {
+  it("accepts Antigravity credentials aliases with an explicit provider", () => {
     expect(
       parseImportPayload({
-        provider: "gemini-cli",
+        provider: "antigravity",
         accessToken: "access",
         refreshToken: "refresh",
         expires_at: 1234,
@@ -932,7 +847,7 @@ describe("parseImportPayload", () => {
         email: "USER@EXAMPLE.COM",
       }),
     ).toMatchObject({
-      provider: "gemini-cli",
+      provider: "antigravity",
       accessToken: "access",
       refreshToken: "refresh",
       expiresAt: 1234,

@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountPool } from "../src/index";
 import {
-  GEMINI_OAUTH_CLIENT_ID,
-  GEMINI_OAUTH_CLIENT_SECRET,
-  GEMINI_OAUTH_REDIRECT_URI,
-  GEMINI_OAUTH_SCOPES,
-} from "../src/gemini-auth";
+  ANTIGRAVITY_OAUTH_CLIENT_SECRET,
+  ANTIGRAVITY_OAUTH_REDIRECT_URI,
+} from "../src/antigravity-auth";
 
 function jwt(payload: Record<string, unknown>): string {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -32,6 +30,60 @@ function durableState() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AccountPool device routes", () => {
+  it("starts, completes, redacts, and deletes Antigravity login sessions", async () => {
+    const upstream = vi.fn(async (input: RequestInfo | URL) => {
+      const request = input as Request;
+      if (request.url === "https://oauth2.googleapis.com/token")
+        return Response.json({ access_token: "ag-access", refresh_token: "ag-refresh", expires_in: 3600 });
+      if (request.url.startsWith("https://www.googleapis.com/oauth2/v2/userinfo"))
+        return Response.json({ id: "ag-user", email: "ag@example.com" });
+      if (request.url.endsWith(":loadCodeAssist"))
+        return Response.json({ cloudaicompanionProject: "ag-project" });
+      return new Response(null, { status: 404 });
+    });
+    const { values, state } = durableState();
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: upstream },
+    } as never);
+    const start = await object.fetch(new Request("https://pool/oauth/antigravity/start", {
+      method: "POST",
+      body: JSON.stringify({ name: "AG Account" }),
+    }));
+    const started = await start.json() as { login: { id: string; authorizationUrl: string } };
+    const session = values.get(`antigravity-login:${started.login.id}`) as { state: string };
+    expect(start.status).toBe(201);
+    expect(JSON.stringify(started)).not.toContain(ANTIGRAVITY_OAUTH_CLIENT_SECRET);
+
+    const complete = await object.fetch(new Request(`https://pool/oauth/antigravity/${started.login.id}`, {
+      method: "POST",
+      body: JSON.stringify({
+        callbackUrl: `${ANTIGRAVITY_OAUTH_REDIRECT_URI}?state=${encodeURIComponent(session.state)}&code=ag-code`,
+      }),
+    }));
+    const result = await complete.json() as { account: Record<string, unknown> };
+    expect(complete.status).toBe(200);
+    expect(result.account).toMatchObject({
+      provider: "antigravity",
+      name: "AG Account",
+      projectId: "ag-project",
+      email: "ag@example.com",
+    });
+    expect(JSON.stringify(result)).not.toMatch(/ag-access|ag-refresh|ag-code|GOCSPX/);
+    expect(values.has(`antigravity-login:${started.login.id}`)).toBe(false);
+
+    const second = await object.fetch(new Request("https://pool/oauth/antigravity/start", {
+      method: "POST",
+      body: "{}",
+    }));
+    const secondLogin = await second.json() as { login: { id: string } };
+    const removed = await object.fetch(new Request(`https://pool/oauth/antigravity/${secondLogin.login.id}`, {
+      method: "DELETE",
+    }));
+    expect(removed.status).toBe(200);
+    expect(values.has(`antigravity-login:${secondLogin.login.id}`)).toBe(false);
+  });
+
   it("normalizes legacy stored accounts to the Codex provider", async () => {
     const { values, state } = durableState();
     values.set("pool", {
@@ -317,154 +369,5 @@ describe("AccountPool device routes", () => {
     expect(JSON.stringify(result)).not.toContain("refresh-browser");
     expect([...values.keys()].some((key) => key.startsWith("browser-login:"))).toBe(false);
     expect(JSON.stringify(values.get("pool"))).toContain("refresh-browser");
-  });
-
-  it("starts Gemini PKCE and imports a pasted callback through native egress", async () => {
-    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url === "https://oauth2.googleapis.com/token") {
-        return Response.json({ access_token: "gemini-access", refresh_token: "gemini-refresh", expires_in: 3600 });
-      }
-      if (url === "https://www.googleapis.com/oauth2/v2/userinfo") {
-        return Response.json({ id: "google-user", email: "gemini@example.com" });
-      }
-      if (url.endsWith(":loadCodeAssist")) {
-        return Response.json({ cloudaicompanionProject: "gemini-project" });
-      }
-      return new Response(null, { status: 404 });
-    });
-    const { values, state } = durableState();
-    const object = new AccountPool(state, {
-      KEY_ENCRYPTION_SECRET: "internal",
-      NATIVE_EGRESS: { fetch: upstream },
-    } as never);
-
-    const start = await object.fetch(new Request("https://pool/oauth/gemini/start", {
-      method: "POST",
-      body: JSON.stringify({ name: "Gemini Account" }),
-    }));
-    const started = await start.json() as { login: { id: string; authorizationUrl: string; expiresAt: number } };
-    const authorization = new URL(started.login.authorizationUrl);
-    expect(start.status).toBe(201);
-    expect(authorization.origin + authorization.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
-    expect(authorization.searchParams.get("client_id")).toBe(GEMINI_OAUTH_CLIENT_ID);
-    expect(authorization.searchParams.get("redirect_uri")).toBe(GEMINI_OAUTH_REDIRECT_URI);
-    expect(authorization.searchParams.get("access_type")).toBe("offline");
-    expect(authorization.searchParams.get("prompt")).toBe("consent");
-    expect(authorization.searchParams.get("scope")?.split(" ")).toEqual([...GEMINI_OAUTH_SCOPES]);
-    expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(authorization.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(authorization.searchParams.get("state")).toBeTruthy();
-    expect(JSON.stringify(started)).not.toMatch(/codeVerifier|gemini-refresh/);
-
-    const stored = [...values.entries()].find(([key]) => key.startsWith("gemini-login:"));
-    expect(stored).toBeTruthy();
-    const session = stored?.[1] as { codeVerifier: string; state: string };
-    const complete = await object.fetch(new Request(`https://pool/oauth/gemini/${started.login.id}`, {
-      method: "POST",
-      body: JSON.stringify({
-        authorizationCode: `${GEMINI_OAUTH_REDIRECT_URI}?code=private-code&state=${encodeURIComponent(session.state)}`,
-      }),
-    }));
-    const result = await complete.json() as { status: string; account: Record<string, unknown> };
-    expect(complete.status).toBe(200);
-    expect(result).toMatchObject({
-      status: "complete",
-      account: {
-        provider: "gemini-cli",
-        name: "Gemini Account",
-        projectId: "gemini-project",
-        email: "gemini@example.com",
-        principalId: "google-user",
-      },
-    });
-    expect(JSON.stringify(result)).not.toMatch(/gemini-access|gemini-refresh|private-code/);
-
-    const tokenCall = upstream.mock.calls[0];
-    const tokenRequest = tokenCall[0] as Request;
-    expect(tokenRequest.url).toBe("https://oauth2.googleapis.com/token");
-    const tokenForm = new URLSearchParams(await tokenRequest.clone().text());
-    expect(Object.fromEntries(tokenForm)).toMatchObject({
-      client_id: GEMINI_OAUTH_CLIENT_ID,
-      client_secret: GEMINI_OAUTH_CLIENT_SECRET,
-      code: "private-code",
-      redirect_uri: GEMINI_OAUTH_REDIRECT_URI,
-      grant_type: "authorization_code",
-      code_verifier: session.codeVerifier,
-    });
-    const challenge = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(session.codeVerifier)));
-    const encodedChallenge = Buffer.from(challenge).toString("base64url");
-    expect(authorization.searchParams.get("code_challenge")).toBe(encodedChallenge);
-    expect([...values.keys()].some((key) => key.startsWith("gemini-login:"))).toBe(false);
-    expect(JSON.stringify(values.get("pool"))).toContain("gemini-refresh");
-  });
-
-  it("rejects a Gemini state mismatch without exchanging or deleting the session", async () => {
-    const upstream = vi.fn();
-    const { values, state } = durableState();
-    const object = new AccountPool(state, {
-      KEY_ENCRYPTION_SECRET: "internal",
-      NATIVE_EGRESS: { fetch: upstream },
-    } as never);
-    const start = await object.fetch(new Request("https://pool/oauth/gemini/start", { method: "POST", body: "{}" }));
-    const { login } = await start.json() as { login: { id: string } };
-
-    const response = await object.fetch(new Request(`https://pool/oauth/gemini/${login.id}`, {
-      method: "POST",
-      body: JSON.stringify({ authorizationCode: "private-code", state: "wrong-state" }),
-    }));
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "OAuth state did not match" });
-    expect(upstream).not.toHaveBeenCalled();
-    expect([...values.keys()].some((key) => key.startsWith("gemini-login:"))).toBe(true);
-  });
-
-  it("reports a missing Gemini refresh token without exposing credentials", async () => {
-    const upstream = vi.fn().mockResolvedValue(Response.json({
-      access_token: "sensitive-access-token",
-      expires_in: 3600,
-    }));
-    const { values, state } = durableState();
-    const object = new AccountPool(state, {
-      KEY_ENCRYPTION_SECRET: "internal",
-      NATIVE_EGRESS: { fetch: upstream },
-    } as never);
-    const start = await object.fetch(new Request("https://pool/oauth/gemini/start", { method: "POST", body: "{}" }));
-    const { login } = await start.json() as { login: { id: string } };
-
-    const response = await object.fetch(new Request(`https://pool/oauth/gemini/${login.id}`, {
-      method: "POST",
-      body: JSON.stringify({ authorizationCode: "sensitive-code" }),
-    }));
-    const result = await response.json() as { error: string };
-
-    expect(response.status).toBe(502);
-    expect(result.error).toContain("did not return a refresh token");
-    expect(JSON.stringify(result)).not.toMatch(/sensitive-access-token|sensitive-code/);
-    expect([...values.keys()].some((key) => key.startsWith("gemini-login:"))).toBe(true);
-  });
-
-  it("rejects expired Gemini sessions and prunes them when starting another", async () => {
-    const { values, state } = durableState();
-    const object = new AccountPool(state, {
-      KEY_ENCRYPTION_SECRET: "internal",
-      NATIVE_EGRESS: { fetch: vi.fn() },
-    } as never);
-    const start = await object.fetch(new Request("https://pool/oauth/gemini/start", { method: "POST", body: "{}" }));
-    const { login } = await start.json() as { login: { id: string } };
-    const key = `gemini-login:${login.id}`;
-    values.set(key, { ...(values.get(key) as object), expiresAt: Date.now() - 1 });
-
-    const expired = await object.fetch(new Request(`https://pool/oauth/gemini/${login.id}`, {
-      method: "POST",
-      body: JSON.stringify({ authorizationCode: "private-code" }),
-    }));
-    expect(expired.status).toBe(410);
-    expect(await expired.json()).toEqual({ error: "Gemini login expired; start again" });
-    expect(values.has(key)).toBe(true);
-
-    await object.fetch(new Request("https://pool/oauth/gemini/start", { method: "POST", body: "{}" }));
-    expect(values.has(key)).toBe(false);
   });
 });

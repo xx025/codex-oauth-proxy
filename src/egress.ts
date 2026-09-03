@@ -10,6 +10,8 @@ const ALLOWED_HOSTS = new Set([
   "oauth2.googleapis.com",
   "www.googleapis.com",
   "cloudcode-pa.googleapis.com",
+  "daily-cloudcode-pa.googleapis.com",
+  "cloudresourcemanager.googleapis.com",
 ]);
 
 export function createUpstreamFetch(env: EgressEnv): typeof fetch {

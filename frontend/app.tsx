@@ -39,11 +39,17 @@ type UsageWindow = {
   usedPercent: number;
   remainingPercent: number;
   windowSeconds?: number;
-  windowMinutes: number;
-  resetsAt: number;
+  windowMinutes?: number;
+  resetsAt?: number;
+};
+type GeminiModelUsage = {
+  modelId: string;
+  remainingPercent: number;
+  remainingAmount?: string | number;
+  resetsAt?: number;
 };
 type Account = {
-  provider?: "codex" | "gemini-cli";
+  provider?: "codex" | "antigravity";
   id: string;
   name: string;
   enabled: boolean;
@@ -60,6 +66,7 @@ type Account = {
   usage?: {
     primary?: UsageWindow;
     secondary?: UsageWindow;
+    geminiModels?: GeminiModelUsage[];
     creditsBalance?: number;
     resetCreditsAvailable?: number;
     capturedAt: number;
@@ -92,7 +99,7 @@ type Stats = {
   retentionLimit?: number;
 };
 type Toast = { title: string; message: string; error?: boolean };
-type Dialog = "import" | "device" | "browser" | "gemini" | "key" | null;
+type Dialog = "import" | "device" | "browser" | "antigravity" | "key" | null;
 type AppInfo = { version?: string; author?: string; repository?: string };
 
 const validViews = new Set([
@@ -539,8 +546,8 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
             <Button onClick={() => open("browser")}>
               {t("copyLinkLogin")}
             </Button>
-            <Button onClick={() => open("gemini")}>
-              {t("geminiLogin")}
+            <Button onClick={() => open("antigravity")}>
+              {t("antigravityLogin")}
             </Button>
             <Button tone="primary" onClick={() => open("device")}>
               {t("chatgptLogin")}
@@ -552,9 +559,9 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
         <div class="list">
           {accounts.length ? (
             accounts.map((account: Account) => {
-              const isGemini = account.provider === "gemini-cli";
+              const isAntigravity = account.provider === "antigravity";
               const identity = account.email || account.principalId || "";
-              const workspace = isGemini ? account.projectId : account.accountId;
+              const workspace = isAntigravity ? account.projectId : account.accountId;
               const isRevealed = Boolean(revealed[account.id]);
               return (
                 <article class="account-row">
@@ -566,7 +573,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                       <h3>
                         {account.name}{" "}
                         <span class="status disabled">
-                          {t(isGemini ? "providerGeminiCli" : "providerCodex")}
+                          {t(isAntigravity ? "providerAntigravity" : "providerCodex")}
                         </span>
                       </h3>
                       <p class="masked-identity identity-line">
@@ -592,13 +599,13 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                       {workspace && (
                         <small class="identity-line">
                           <span>
-                            {t(isGemini ? "project" : "workspace")}: {isRevealed
+                            {t(isAntigravity ? "project" : "workspace")}: {isRevealed
                               ? workspace
                               : maskIdentity(workspace)}
                           </span>
                         </small>
                       )}
-                      {!isGemini && account.usage && !account.usage.error && (
+                      {account.usage && !account.usage.error && (
                         <small class="usage-snapshot">
                           {t("quotaCaptured", {
                             date: formatDate(locale, account.usage.capturedAt),
@@ -613,10 +620,17 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                       )}
                     </div>
                   </div>
-                  {isGemini ? (
+                  {isAntigravity ? (
                     <>
-                      <div />
-                      <div />
+                      <Quota
+                        label={t("primaryQuota")}
+                        window={account.usage?.primary}
+                        error={account.usage?.error}
+                      />
+                      <AntigravityModelQuota
+                        models={account.usage?.geminiModels}
+                        error={account.usage?.error}
+                      />
                     </>
                   ) : (
                     <>
@@ -650,7 +664,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                         ? ` · HTTP ${account.lastStatus}`
                         : ""}
                     </small>
-                    {!isGemini && account.lastResetAt && (
+                    {!isAntigravity && account.lastResetAt && (
                       <small>
                         {t("lastReset", {
                           date: formatDate(locale, account.lastResetAt),
@@ -663,7 +677,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                     <Button onClick={() => rename(account)}>
                       {t("rename")}
                     </Button>
-                    {!isGemini && (
+                    {!isAntigravity && (
                       <Button onClick={() => reset(account)}>
                         {t("resetQuota")}
                       </Button>
@@ -684,8 +698,8 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
               text={t("noAccountsText")}
               actions={
                 <>
-                  <Button onClick={() => open("gemini")}>
-                    {t("geminiLogin")}
+                  <Button onClick={() => open("antigravity")}>
+                    {t("antigravityLogin")}
                   </Button>
                   <Button tone="primary" onClick={() => open("device")}>
                     {t("chatgptLogin")}
@@ -713,7 +727,7 @@ function Quota({
     return (
       <div class="quota">
         <small>{label}</small>
-        <span>{error ? t("quotaUnavailable") : t("quotaNotRefreshed")}</span>
+        <span title={error}>{error || t("quotaNotRefreshed")}</span>
       </div>
     );
   const value = Math.max(
@@ -721,7 +735,8 @@ function Quota({
     Math.min(100, Number(window.remainingPercent) || 0),
   );
   const used = Math.max(0, Math.min(100, Number(window.usedPercent) || 0));
-  const windowSeconds = window.windowSeconds ?? window.windowMinutes * 60;
+  const windowSeconds = window.windowSeconds ??
+    (window.windowMinutes !== undefined ? window.windowMinutes * 60 : undefined);
   return (
     <div class="quota">
       <div class="quota-head">
@@ -733,12 +748,128 @@ function Quota({
       </div>
       <span class="quota-meta">
         {t("quotaUsed", { percent: formatPercent(locale, used / 100) })}
-        {" / "}
-        {t("quotaWindowShort", { duration: formatDuration(locale, windowSeconds) })}
-        {" / "}
-        {t("resetsIn", { duration: formatUntilReset(locale, window.resetsAt) })}
+        {windowSeconds !== undefined
+          ? ` / ${t("quotaWindowShort", { duration: formatDuration(locale, windowSeconds) })}`
+          : ""}
+        {window.resetsAt !== undefined
+          ? ` / ${t("resetsIn", { duration: formatUntilReset(locale, window.resetsAt) })}`
+          : ""}
       </span>
     </div>
+  );
+}
+
+function AntigravityModelQuota({
+  models,
+  error,
+}: {
+  models?: GeminiModelUsage[];
+  error?: string;
+}) {
+  const { locale, t } = useI18n();
+  const [open, setOpen] = useState(false);
+
+  if (error || !models?.length)
+    return (
+      <div class="quota">
+        <small>{t("geminiModelQuota")}</small>
+        <span title={error}>{error || t("quotaNotRefreshed")}</span>
+      </div>
+    );
+
+  return (
+    <>
+      <div class="quota">
+        <div class="quota-head">
+          <small>{t("geminiModelQuota")}</small>
+          <button
+            type="button"
+            class="button ghost"
+            style={{ padding: "0 6px", fontSize: "11px", height: "20px", minHeight: "20px" }}
+            onClick={() => setOpen(true)}
+          >
+            {t("modelQuotaSummary", { count: models.length })}
+          </button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", margin: "4px 0 2px" }}>
+          {models.slice(0, 2).map((m) => {
+            const pct = Math.round(m.remainingPercent);
+            const shortName = m.modelId.replace(/^gemini-/, "g-").replace(/^claude-/, "c-");
+            return (
+              <span
+                key={m.modelId}
+                class="status disabled"
+                style={{ fontSize: "10px", padding: "1px 5px", lineHeight: "1.4" }}
+                title={`${m.modelId}: ${pct}%`}
+              >
+                {shortName}: {pct}%
+              </span>
+            );
+          })}
+          {models.length > 2 && (
+            <button
+              type="button"
+              class="button ghost"
+              style={{ fontSize: "10px", padding: "0 4px", height: "18px", minHeight: "18px" }}
+              onClick={() => setOpen(true)}
+            >
+              +{models.length - 2}
+            </button>
+          )}
+        </div>
+        <span class="quota-meta">
+          <a
+            href="javascript:void(0)"
+            onClick={() => setOpen(true)}
+            style={{ textDecoration: "underline", color: "var(--brand-text)", fontSize: "11px" }}
+          >
+            {t("viewModelQuotas")}
+          </a>
+        </span>
+      </div>
+
+      {open && (
+        <Modal
+          title={t("modelQuotaTitle")}
+          subtitle={t("modelQuotaSummary", { count: models.length })}
+          close={() => setOpen(false)}
+          footer={
+            <Button tone="primary" onClick={() => setOpen(false)}>
+              {t("close")}
+            </Button>
+          }
+        >
+          <div style={{ display: "grid", gap: "10px", maxHeight: "60vh", overflowY: "auto", padding: "4px 0" }}>
+            {models.map((model) => {
+              const value = Math.max(0, Math.min(100, Number(model.remainingPercent) || 0));
+              return (
+                <div
+                  key={model.modelId}
+                  class="quota"
+                  style={{ border: "1px solid var(--line)", borderRadius: "6px", padding: "10px 14px" }}
+                >
+                  <div class="quota-head">
+                    <strong style={{ fontSize: "13px" }}>{model.modelId}</strong>
+                    <strong>{formatPercent(locale, value / 100)}</strong>
+                  </div>
+                  <div class="quota-track" style={{ margin: "6px 0 4px" }}>
+                    <i style={{ width: `${value}%` }} />
+                  </div>
+                  <span class="quota-meta">
+                    {model.remainingAmount !== undefined
+                      ? t("geminiRemainingAmount", { amount: String(model.remainingAmount) })
+                      : t("quotaRemaining", { percent: formatPercent(locale, value / 100) })}
+                    {model.resetsAt !== undefined
+                      ? ` / ${t("resetsAt", { date: formatDate(locale, model.resetsAt * 1_000) })}`
+                      : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -1522,17 +1653,9 @@ function Dialogs({ dialog, close, reloadAccounts, reloadKeys, notify }: any) {
     );
   if (dialog === "key")
     return <KeyDialog close={close} reload={reloadKeys} notify={notify} />;
-  if (dialog === "gemini")
-    return (
-      <GeminiOAuthDialog
-        close={close}
-        reload={reloadAccounts}
-        notify={notify}
-      />
-    );
   return (
     <OAuthDialog
-      mode={dialog}
+      mode={dialog === "device" ? "device" : "browser"}
       close={close}
       reload={reloadAccounts}
       notify={notify}
@@ -1570,13 +1693,13 @@ function Modal({ title, subtitle, close, children, footer }: any) {
 function ImportDialog({ close, reload, notify }: any) {
   const { t } = useI18n();
   const [name, setName] = useState(""),
-    [provider, setProvider] = useState<"codex" | "gemini-cli">("codex"),
+    [provider, setProvider] = useState<"codex" | "antigravity">("codex"),
     [payload, setPayload] = useState("");
   const submit = async () => {
     try {
       const body = JSON.parse(payload);
       if (name.trim()) body.name = name.trim();
-      if (provider === "gemini-cli") body.provider = provider;
+      if (provider !== "codex") body.provider = provider;
       await api("/admin/api/accounts", {
         method: "POST",
         body: JSON.stringify(body),
@@ -1613,11 +1736,11 @@ function ImportDialog({ close, reload, notify }: any) {
         <select
           value={provider}
           onChange={(e) =>
-            setProvider(e.currentTarget.value as "codex" | "gemini-cli")
+            setProvider(e.currentTarget.value as "codex" | "antigravity")
           }
         >
           <option value="codex">{t("providerCodex")}</option>
-          <option value="gemini-cli">{t("providerGeminiCli")}</option>
+          <option value="antigravity">{t("providerAntigravity")}</option>
         </select>
       </label>
       <label>
@@ -1630,8 +1753,8 @@ function ImportDialog({ close, reload, notify }: any) {
           value={payload}
           onInput={(e) => setPayload(e.currentTarget.value)}
           placeholder={t(
-            provider === "gemini-cli"
-              ? "geminiCredentialsPlaceholder"
+            provider === "antigravity"
+              ? "antigravityCredentialsPlaceholder"
               : "codexCredentialsPlaceholder",
           )}
         />
@@ -1690,14 +1813,22 @@ function KeyDialog({ close, reload, notify }: any) {
 }
 function OAuthDialog({ mode, close, reload, notify }: any) {
   const { t } = useI18n();
+  const [provider, setProvider] = useState<"antigravity" | "codex">("antigravity");
   const [name, setName] = useState(""),
     [login, setLogin] = useState<any>(null),
     [callback, setCallback] = useState("");
+
   const start = async () => {
-    const popup = window.open("about:blank", "codexOAuthLogin");
+    const popup = window.open("about:blank", "oauthLogin");
     if (popup) popup.opener = null;
+    const endpoint =
+      mode === "device"
+        ? "/admin/api/oauth/device/start"
+        : provider === "antigravity"
+          ? "/admin/api/oauth/antigravity/start"
+          : "/admin/api/oauth/browser/start";
     try {
-      const data = await api<any>(`/admin/api/oauth/${mode}/start`, {
+      const data = await api<any>(endpoint, {
         method: "POST",
         body: JSON.stringify({ name: name.trim() }),
       });
@@ -1712,6 +1843,7 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
       notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
     }
   };
+
   useEffect(() => {
     if (mode !== "device" || !login) return;
     const timer = setInterval(
@@ -1740,26 +1872,48 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
     );
     return () => clearInterval(timer);
   }, [login]);
+
   const cancel = () => {
-    if (login)
-      api(`/admin/api/oauth/${mode}/${encodeURIComponent(login.id)}`, {
-        method: "DELETE",
-      }).catch(() => {});
+    if (login) {
+      const endpoint =
+        mode === "device"
+          ? `/admin/api/oauth/device/${encodeURIComponent(login.id)}`
+          : provider === "antigravity"
+            ? `/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`
+            : `/admin/api/oauth/browser/${encodeURIComponent(login.id)}`;
+      api(endpoint, { method: "DELETE" }).catch(() => {});
+    }
     close();
   };
+
   const finish = async () => {
+    if (!login || !callback.trim())
+      return notify(
+        provider === "antigravity" ? t("antigravityCallbackRequired") : t("callbackUrl"),
+        provider === "antigravity" ? t("antigravityCallbackHelp") : t("callbackHelp"),
+        true,
+      );
+    const isAntigravity = provider === "antigravity" || callback.includes("51121");
+    const endpoint = isAntigravity
+      ? `/admin/api/oauth/antigravity/${encodeURIComponent(login.id)}`
+      : `/admin/api/oauth/browser/${encodeURIComponent(login.id)}`;
     try {
-      await api(`/admin/api/oauth/browser/${encodeURIComponent(login.id)}`, {
+      await api(endpoint, {
         method: "POST",
         body: JSON.stringify({ callbackUrl: callback.trim() }),
       });
       await reload();
       close();
-      notify(t("accountAdded"), t("accountAddedBrowser"));
+      if (isAntigravity) {
+        notify(t("antigravityAccountAdded"), t("antigravityAccountAddedText"));
+      } else {
+        notify(t("accountAdded"), t("accountAddedBrowser"));
+      }
     } catch (error) {
       notify(t("loginIncomplete"), message(error, t("requestFailed")), true);
     }
   };
+
   return (
     <Modal
       title={mode === "device" ? t("oauthDeviceTitle") : t("oauthBrowserTitle")}
@@ -1773,14 +1927,29 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
             {t("continueLogin")}
           </Button>
         ) : mode === "browser" ? (
-          <Button tone="primary" onClick={finish}>
-            {t("finishImport")}
-          </Button>
+          <>
+            <Button onClick={cancel}>{t("cancel")}</Button>
+            <Button tone="primary" onClick={finish}>
+              {t("finishImport")}
+            </Button>
+          </>
         ) : (
           <span>{t("waitingAuthorization")}</span>
         )
       }
     >
+      {mode === "browser" && !login && (
+        <label>
+          {t("accountProvider")}
+          <select
+            value={provider}
+            onChange={(e) => setProvider(e.currentTarget.value as "antigravity" | "codex")}
+          >
+            <option value="antigravity">{t("providerAntigravity")}</option>
+            <option value="codex">{t("providerCodex")}</option>
+          </select>
+        </label>
+      )}
       <label>
         {t("displayName")}
         <small>{t("oauthNameHelp")}</small>
@@ -1817,111 +1986,33 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
         </>
       )}
       {login && mode === "browser" && (
-        <label>
-          {t("callbackUrl")}
-          <small>{t("callbackHelp")}</small>
-          <textarea
-            value={callback}
-            onInput={(e) => setCallback(e.currentTarget.value)}
-            placeholder={t("callbackPlaceholder")}
-          />
-        </label>
-      )}
-    </Modal>
-  );
-}
-
-function GeminiOAuthDialog({ close, reload, notify }: any) {
-  const { t } = useI18n();
-  const [name, setName] = useState(""),
-    [login, setLogin] = useState<any>(null),
-    [authorizationCode, setAuthorizationCode] = useState("");
-  const start = async () => {
-    const popup = window.open("about:blank", "geminiOAuthLogin");
-    if (popup) popup.opener = null;
-    try {
-      const data = await api<any>("/admin/api/oauth/gemini/start", {
-        method: "POST",
-        body: JSON.stringify({ name: name.trim() }),
-      });
-      setLogin(data.login);
-      if (popup) popup.location.href = data.login.authorizationUrl;
-    } catch (error) {
-      popup?.close();
-      notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
-    }
-  };
-  const cancel = () => {
-    if (login)
-      api(`/admin/api/oauth/gemini/${encodeURIComponent(login.id)}`, {
-        method: "DELETE",
-      }).catch(() => {});
-    close();
-  };
-  const finish = async () => {
-    if (!authorizationCode.trim())
-      return notify(t("geminiCodeRequired"), t("geminiCodeHelp"), true);
-    try {
-      await api(`/admin/api/oauth/gemini/${encodeURIComponent(login.id)}`, {
-        method: "POST",
-        body: JSON.stringify({ authorizationCode: authorizationCode.trim() }),
-      });
-      await reload();
-      close();
-      notify(t("geminiAccountAdded"), t("geminiAccountAddedText"));
-    } catch (error) {
-      notify(t("loginIncomplete"), message(error, t("requestFailed")), true);
-    }
-  };
-  return (
-    <Modal
-      title={t("geminiOAuthTitle")}
-      subtitle={t("geminiOAuthSubtitle")}
-      close={cancel}
-      footer={
-        !login ? (
-          <Button tone="primary" onClick={start}>
-            {t("continueLogin")}
-          </Button>
-        ) : (
-          <>
-            <Button onClick={cancel}>{t("cancel")}</Button>
-            <Button tone="primary" onClick={finish}>
-              {t("completeGeminiLogin")}
-            </Button>
-          </>
-        )
-      }
-    >
-      <label>
-        {t("displayName")}
-        <small>{t("oauthNameHelp")}</small>
-        <input
-          value={name}
-          disabled={!!login}
-          onInput={(e) => setName(e.currentTarget.value)}
-        />
-      </label>
-      {login && (
         <>
           <label>
-            {t("geminiAuthorizationPage")}
+            {t("verificationLink")}
             <a
               class="button"
               href={login.authorizationUrl}
               target="_blank"
               rel="noreferrer"
             >
-              {t("openGeminiAuthorization")}
+              {t("openVerification")}
             </a>
           </label>
           <label>
-            {t("geminiAuthorizationCode")}
-            <small>{t("geminiCodeHelp")}</small>
+            {t("callbackUrl")}
+            <small>
+              {provider === "antigravity"
+                ? t("antigravityCallbackHelp")
+                : t("callbackHelp")}
+            </small>
             <textarea
-              value={authorizationCode}
-              onInput={(e) => setAuthorizationCode(e.currentTarget.value)}
-              placeholder={t("geminiCodePlaceholder")}
+              value={callback}
+              onInput={(e) => setCallback(e.currentTarget.value)}
+              placeholder={
+                provider === "antigravity"
+                  ? t("antigravityCallbackPlaceholder")
+                  : t("callbackPlaceholder")
+              }
             />
           </label>
         </>

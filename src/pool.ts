@@ -1,10 +1,10 @@
 import {
-  discoverGeminiProject,
-  fetchGeminiUserInfo,
-  refreshGeminiTokens,
-} from "./gemini-auth";
+  ANTIGRAVITY_USER_AGENT,
+  fetchAntigravityUserInfo,
+  refreshAntigravityTokens,
+} from "./antigravity-auth";
 
-export type AccountProvider = "codex" | "gemini-cli";
+export type AccountProvider = "codex" | "antigravity";
 
 export interface AccountRecord {
   provider: AccountProvider;
@@ -60,14 +60,22 @@ export type AccountResetStatus =
 export interface UsageWindow {
   usedPercent: number;
   remainingPercent: number;
-  windowSeconds: number;
-  windowMinutes: number;
-  resetsAt: number;
+  windowSeconds?: number;
+  windowMinutes?: number;
+  resetsAt?: number;
+}
+
+export interface GeminiModelUsage {
+  modelId: string;
+  remainingPercent: number;
+  remainingAmount?: string | number;
+  resetsAt?: number;
 }
 
 export interface AccountUsage {
   primary?: UsageWindow;
   secondary?: UsageWindow;
+  geminiModels?: GeminiModelUsage[];
   creditsBalance?: number;
   resetCreditsAvailable?: number;
   capturedAt: number;
@@ -200,6 +208,8 @@ export interface TokenIdentity {
 
 const OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const ANTIGRAVITY_MODELS_URL =
+  "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 const RESET_CREDITS_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const RESET_CREDIT_URL =
@@ -364,7 +374,7 @@ export class AccountPoolCore {
     const settings = settingsFor(state);
     await Promise.all(
       state.accounts.map(async (account) => {
-        if (!account.enabled || account.provider === "gemini-cli") return;
+        if (!account.enabled) return;
         try {
           await this.refreshUsageForAccount(account, settings);
         } catch (error) {
@@ -386,45 +396,20 @@ export class AccountPoolCore {
     const provider = payload.provider ?? "codex";
     payload = { ...payload, provider };
     if (provider === "codex") validateImport(payload);
-    else validateGeminiCredentials(payload);
+    else validateGoogleCredentials(payload);
     const settings = settingsFor(state);
-    if (provider === "gemini-cli") {
+    if (provider === "antigravity") {
       try {
-        if (
-          payload.expiresAt <=
-          this.now() + settings.tokenExpiryBufferMinutes * 60_000
-        ) {
-          Object.assign(
-            payload,
-            await refreshGeminiTokens(
-              {
-                accessToken: payload.accessToken,
-                refreshToken: payload.refreshToken,
-                expiresAt: payload.expiresAt,
-              },
-              this.oauthFetch,
-              this.now,
-            ),
-          );
+        if (payload.expiresAt <= this.now() + settings.tokenExpiryBufferMinutes * 60_000) {
+          Object.assign(payload, await refreshAntigravityTokens(payload, this.oauthFetch, this.now));
         }
         if (!payload.email || !payload.principalId) {
-          const identity = await fetchGeminiUserInfo(
-            payload.accessToken,
-            this.oauthFetch,
-          );
-          payload.email = payload.email || identity.email;
-          payload.principalId =
-            payload.principalId || identity.principalId || "";
+          const identity = await fetchAntigravityUserInfo(payload.accessToken, this.oauthFetch);
+          payload.email ||= identity.email;
+          payload.principalId ||= identity.principalId;
         }
-        payload.projectId = await discoverGeminiProject(
-          payload.accessToken,
-          this.oauthFetch,
-          payload.projectId,
-        );
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Gemini CLI setup failed";
-        throw new PoolError(502, message);
+        throw new PoolError(502, error instanceof Error ? error.message : "Antigravity setup failed");
       }
       validateImport(payload);
     }
@@ -516,8 +501,8 @@ export class AccountPoolCore {
     const state = await this.load();
     const settings = settingsFor(state);
     const account = requiredAccount(state, id);
-    if (account.provider === "gemini-cli")
-      throw new PoolError(409, "Gemini CLI accounts do not support quota reset");
+    if (account.provider !== "codex")
+      throw new PoolError(409, `${account.provider} accounts do not support quota reset`);
     try {
       await this.resetAccount(account, settings);
     } catch (error) {
@@ -543,11 +528,15 @@ export class AccountPoolCore {
       { length: state.accounts.length },
       (_, offset) => (state.cursor + offset) % state.accounts.length,
     );
-    if (
-      provider === "codex" &&
-      settings.selectionStrategy === "quota_weighted"
-    ) {
-      await this.refreshQuotaWeights(state, candidateIndexes, excludedSet, settings, now);
+    if (settings.selectionStrategy === "quota_weighted") {
+      await this.refreshQuotaWeights(
+        state,
+        candidateIndexes,
+        excludedSet,
+        settings,
+        now,
+        provider,
+      );
     }
     if (settings.selectionStrategy === "least_failures") {
       candidateIndexes.sort(
@@ -767,11 +756,8 @@ export class AccountPoolCore {
       this.now() + settings.tokenExpiryBufferMinutes * 60_000
     )
       return;
-    if (account.provider === "gemini-cli") {
-      Object.assign(
-        account,
-        await refreshGeminiTokens(account, this.oauthFetch, this.now),
-      );
+    if (account.provider === "antigravity") {
+      Object.assign(account, await refreshAntigravityTokens(account, this.oauthFetch, this.now));
       account.updatedAt = this.now();
       account.failureCount = 0;
       account.cooldownUntil = 0;
@@ -884,13 +870,22 @@ export class AccountPoolCore {
       await this.refreshIfNeeded(account, settings);
       response = await this.fetchUsage(account);
     }
-    if (!response.ok)
-      throw new Error(`Usage endpoint returned HTTP ${response.status}`);
-    const usage = parseUsage(await response.json(), this.now());
-    try {
-      usage.resetCreditsAvailable = await this.fetchResetCredits(account);
-    } catch {
-      usage.resetCreditsAvailable = usage.resetCreditsAvailable ?? undefined;
+    let usage: AccountUsage;
+    if (account.provider === "antigravity") {
+      if (!response.ok)
+        throw new Error(`Usage endpoint returned HTTP ${response.status}`);
+      usage = parseGeminiAvailableModelsUsage(await response.json(), this.now());
+    } else {
+      if (!response.ok)
+        throw new Error(`Usage endpoint returned HTTP ${response.status}`);
+      usage = parseUsage(await response.json(), this.now());
+    }
+    if (account.provider === "codex") {
+      try {
+        usage.resetCreditsAvailable = await this.fetchResetCredits(account);
+      } catch {
+        usage.resetCreditsAvailable = usage.resetCreditsAvailable ?? undefined;
+      }
     }
     account.usage = usage;
   }
@@ -901,13 +896,14 @@ export class AccountPoolCore {
     excludedSet: Set<string>,
     settings: PoolSettings,
     now: number,
+    provider: AccountProvider,
   ): Promise<void> {
     await Promise.all(
       candidateIndexes.map(async (index) => {
         const account = state.accounts[index];
         if (
           !account.enabled ||
-          account.provider === "gemini-cli" ||
+          account.provider !== provider ||
           account.cooldownUntil > now ||
           excludedSet.has(account.id) ||
           !quotaWeightStale(account.usage, now)
@@ -927,6 +923,18 @@ export class AccountPoolCore {
   }
 
   private fetchUsage(account: AccountRecord): Promise<Response> {
+    if (account.provider === "antigravity") {
+      return this.oauthFetch(ANTIGRAVITY_MODELS_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${account.accessToken}`,
+          "content-type": "application/json",
+          "user-agent": ANTIGRAVITY_USER_AGENT,
+        },
+        body: JSON.stringify({ project: account.projectId }),
+      });
+    }
     return this.oauthFetch(USAGE_URL, {
       headers: {
         accept: "application/json",
@@ -1046,7 +1054,7 @@ export function tokenIdentity(
 
 function validateImport(payload: ImportPayload): void {
   const provider = payload.provider ?? "codex";
-  if (provider !== "codex" && provider !== "gemini-cli")
+  if (provider !== "codex" && provider !== "antigravity")
     throw new PoolError(400, "Invalid account provider");
   if (
     !payload.accessToken ||
@@ -1062,8 +1070,8 @@ function validateImport(payload: ImportPayload): void {
   }
   if (provider === "codex" && !payload.accountId)
     throw new PoolError(400, "Codex credentials require a workspace account ID");
-  if (provider === "gemini-cli" && !payload.projectId)
-    throw new PoolError(400, "Gemini CLI credentials require a Code Assist project");
+  if (provider !== "codex" && !payload.projectId)
+    throw new PoolError(400, `${provider} credentials require a Code Assist project`);
   if (payload.name && payload.name.length > 80)
     throw new PoolError(400, "Account name is too long");
   if (payload.email && payload.email.length > 320)
@@ -1072,7 +1080,7 @@ function validateImport(payload: ImportPayload): void {
     throw new PoolError(400, "Account identity is too long");
 }
 
-function validateGeminiCredentials(payload: ImportPayload): void {
+function validateGoogleCredentials(payload: ImportPayload): void {
   if (
     !payload.accessToken ||
     !payload.refreshToken ||
@@ -1081,7 +1089,7 @@ function validateGeminiCredentials(payload: ImportPayload): void {
   ) {
     throw new PoolError(
       400,
-      "Gemini CLI credentials require access token, refresh token, and expiry",
+      "Google credentials require access token, refresh token, and expiry",
     );
   }
   if (payload.name && payload.name.length > 80)
@@ -1096,7 +1104,7 @@ function redactAccount(account: AccountRecord): AccountMetadata {
     refreshToken: _refreshToken,
     ...metadata
   } = account;
-  if (metadata.provider === "gemini-cli") delete metadata.accountId;
+  if (metadata.provider !== "codex") delete metadata.accountId;
   else delete metadata.projectId;
   return metadata;
 }
@@ -1154,7 +1162,7 @@ function parseSelectionStrategy(value: unknown): SelectionStrategy {
 
 function parseProvider(value: unknown): AccountProvider {
   if (value === undefined || value === null || value === "") return "codex";
-  if (value === "codex" || value === "gemini-cli") return value;
+  if (value === "codex" || value === "antigravity") return value;
   throw new PoolError(400, "Invalid account provider");
 }
 
@@ -1339,6 +1347,95 @@ function parseUsageWindow(input: unknown): UsageWindow | undefined {
   };
 }
 
+function parseGeminiUsage(input: unknown, capturedAt: number): AccountUsage {
+  const root = objectValue(input);
+  const buckets = Array.isArray(root?.buckets) ? root.buckets : [];
+  const byModel = new Map<string, GeminiModelUsage>();
+  for (const inputBucket of buckets) {
+    const bucket = objectValue(inputBucket);
+    const modelId = stringValue(bucket?.modelId);
+    const fraction = typeof bucket?.remainingFraction === "number" &&
+        Number.isFinite(bucket.remainingFraction)
+      ? bucket.remainingFraction
+      : undefined;
+    if (!modelId || fraction === undefined) continue;
+    const remainingPercent = Math.round(
+      Math.max(0, Math.min(100, fraction * 100)) * 10_000,
+    ) / 10_000;
+    const resetTime = stringValue(bucket?.resetTime);
+    const resetMilliseconds = resetTime ? Date.parse(resetTime) : NaN;
+    const remainingAmount =
+      typeof bucket?.remainingAmount === "string" ||
+        (typeof bucket?.remainingAmount === "number" &&
+          Number.isFinite(bucket.remainingAmount))
+        ? bucket.remainingAmount
+        : undefined;
+    const model: GeminiModelUsage = {
+      modelId,
+      remainingPercent,
+      remainingAmount,
+      resetsAt: Number.isFinite(resetMilliseconds)
+        ? Math.floor(resetMilliseconds / 1_000)
+        : undefined,
+    };
+    const previous = byModel.get(modelId);
+    if (!previous || model.remainingPercent < previous.remainingPercent)
+      byModel.set(modelId, model);
+  }
+  const geminiModels = [...byModel.values()].sort((a, b) =>
+    a.modelId.localeCompare(b.modelId),
+  );
+  if (!geminiModels.length)
+    throw new Error("Gemini quota response did not contain valid buckets");
+  const lowest = geminiModels.reduce((minimum, model) =>
+    model.remainingPercent < minimum.remainingPercent ? model : minimum,
+  );
+  return {
+    primary: {
+      usedPercent: Math.round((100 - lowest.remainingPercent) * 10_000) / 10_000,
+      remainingPercent: lowest.remainingPercent,
+      resetsAt: lowest.resetsAt,
+    },
+    geminiModels,
+    capturedAt,
+  };
+}
+
+function parseGeminiAvailableModelsUsage(
+  input: unknown,
+  capturedAt: number,
+): AccountUsage {
+  const root = objectValue(input);
+  const models = objectValue(root?.models) ?? {};
+  const buckets = Object.entries(models).map(([modelId, value]) => {
+    const quota = objectValue(objectValue(value)?.quotaInfo);
+    return {
+      modelId,
+      remainingFraction: quota?.remainingFraction,
+      resetTime: quota?.resetTime,
+    };
+  });
+  return parseGeminiUsage({ buckets }, capturedAt);
+}
+
+async function safeGoogleErrorReason(response: Response): Promise<string> {
+  if (response.ok) return "";
+  try {
+    const root = objectValue(await response.clone().json());
+    const error = objectValue(root?.error);
+    const status = stringValue(error?.status).slice(0, 80);
+    const details = Array.isArray(error?.details) ? error.details : [];
+    const reason = details
+      .map((detail) => stringValue(objectValue(detail)?.reason))
+      .find(Boolean)
+      ?.slice(0, 80) ?? "";
+    const summary = [status, reason].filter(Boolean).join("/");
+    return summary ? `(${summary})` : "";
+  } catch {
+    return "";
+  }
+}
+
 function optionalNumber(value: unknown): number | undefined {
   const parsed =
     typeof value === "number"
@@ -1352,7 +1449,8 @@ function optionalNumber(value: unknown): number | undefined {
 function safeUsageError(error: unknown): string {
   const message =
     error instanceof Error ? error.message : "Usage refresh failed";
-  return /^Usage endpoint returned HTTP \d{3}$/.test(message)
+  return /^(Usage endpoint returned HTTP \d{3}|Gemini quota response did not contain valid buckets)$/.test(message) ||
+      /^Gemini quota diagnostics: retrieveUserQuota=\d{3}; loadCodeAssist=\d{3}(?:\([A-Z0-9_/-]+\))?; fetchAvailableModels=\d{3}(?:\([A-Z0-9_/-]+\))?$/.test(message)
     ? message
     : "Usage refresh failed";
 }
@@ -1399,7 +1497,8 @@ function quotaExhausted(usage: AccountUsage | undefined, now: number): boolean {
 }
 
 function windowExhausted(window: UsageWindow | undefined, now: number): boolean {
-  if (!window || window.resetsAt * 1000 <= now) return false;
+  if (!window || window.resetsAt === undefined || window.resetsAt * 1000 <= now)
+    return false;
   return window.remainingPercent <= 0 || window.usedPercent >= 100;
 }
 

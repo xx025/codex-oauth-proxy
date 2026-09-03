@@ -1,10 +1,11 @@
 import { PoolError } from "./pool";
 import type { AccountProvider } from "./pool";
 import {
+  ANTIGRAVITY_GENERATE_CONTENT_URL,
+  antigravityHeaders,
+  antigravityModelEntries,
+  antigravityRequestBody,
   finalizeGeminiResponse,
-  GEMINI_GENERATE_CONTENT_URL,
-  geminiHeaders,
-  geminiRequestBody,
   prepareGeminiRequest,
 } from "./gemini-api";
 
@@ -47,6 +48,7 @@ export interface PreparedProxyRequest {
   upstreamUrl: string;
   method: "GET" | "POST";
   body?: Uint8Array;
+  sessionId?: string;
 }
 
 export interface ProxyRequestOptions {
@@ -106,19 +108,25 @@ export function prepareProxyRequest(
     };
   }
   const body = parseBody(bodyBytes);
-  if (stringValue(body.model).trim().toLowerCase().startsWith("gemini-")) {
+  const modelName = stringValue(body.model).trim().toLowerCase();
+  if (
+    modelName.startsWith("gemini-") ||
+    modelName.startsWith("antigravity-") ||
+    modelName.startsWith("claude-")
+  ) {
     if (pathname !== "/v1/responses" && pathname !== "/v1/chat/completions")
       throw new PoolError(404, "Not found");
     const kind = pathname === "/v1/responses" ? "responses" : "chat";
     const gemini = prepareGeminiRequest(kind, body);
     return {
-      provider: "gemini-cli",
+      provider: "antigravity",
       kind,
       model: gemini.model,
       streaming: body.stream === true,
-      upstreamUrl: GEMINI_GENERATE_CONTENT_URL,
+      upstreamUrl: ANTIGRAVITY_GENERATE_CONTENT_URL,
       method: "POST",
       body: encoder.encode(JSON.stringify(gemini.request)),
+      sessionId: requestSessionId(body),
     };
   }
   if (pathname === "/v1/responses") return prepareResponsesRequest(body, options);
@@ -131,16 +139,22 @@ export function prepareSelectedUpstreamRequest(
   prepared: PreparedProxyRequest,
   account: SelectedUpstreamAccount,
 ): SelectedUpstreamRequest {
-  if (prepared.provider === "gemini-cli") {
+  if (prepared.provider === "antigravity") {
     const raw = prepared.body
       ? parseJsonObject(new TextDecoder().decode(prepared.body), "Invalid prepared Gemini request")
       : {};
+    const sessionId =
+      prepared.sessionId ||= requestSessionId(request) || crypto.randomUUID();
     return {
-      url: prepared.upstreamUrl,
+      url: ANTIGRAVITY_GENERATE_CONTENT_URL,
       init: {
         method: prepared.method,
-        headers: geminiHeaders(account.accessToken),
-        body: geminiRequestBody({ model: prepared.model, request: raw }, account.projectId || "") as BodyInit,
+        headers: antigravityHeaders(account.accessToken),
+        body: antigravityRequestBody(
+          { model: prepared.model, request: raw },
+          account.projectId || "",
+          sessionId,
+        ) as BodyInit,
         redirect: "manual",
       },
     };
@@ -199,7 +213,7 @@ export async function finalizeUpstreamResponse(
   response: Response,
 ): Promise<Response> {
   if (!response.ok) return response;
-  if (prepared.provider === "gemini-cli")
+  if (prepared.provider === "antigravity")
     return finalizeGeminiResponse(
       prepared.kind as "responses" | "chat",
       prepared.streaming,
@@ -208,7 +222,7 @@ export async function finalizeUpstreamResponse(
     );
   if (prepared.kind === "models") {
     const payload = await readJsonResponse(response, 2 * 1024 * 1024);
-    return Response.json(modelsFromUpstream(payload));
+    return Response.json(modelsFromUpstream(payload, true));
   }
   if (prepared.kind === "responses") {
     if (prepared.streaming) return streamResponse(response);
@@ -228,7 +242,10 @@ export async function finalizeUpstreamResponse(
   );
 }
 
-export function modelsFromUpstream(input: unknown): JsonObject {
+export function modelsFromUpstream(
+  input: unknown,
+  includeAntigravity = false,
+): JsonObject {
   const root = objectValue(input);
   const models = Array.isArray(root?.models) ? root.models : [];
   const data: JsonObject[] = [];
@@ -271,9 +288,24 @@ export function modelsFromUpstream(input: unknown): JsonObject {
       );
     }
   }
+  if (includeAntigravity) {
+    for (const ag of antigravityModelEntries()) {
+      if (!seenModels.has(stringValue(ag.id))) {
+        seenModels.add(stringValue(ag.id));
+        data.push(ag);
+      }
+    }
+  }
   if (!data.length)
     throw new PoolError(502, "Upstream returned no usable models");
   return { object: "list", data };
+}
+
+export function antigravityModelCatalog(): JsonObject {
+  return {
+    object: "list",
+    data: antigravityModelEntries(),
+  };
 }
 
 export function transformChatStream(
@@ -1190,6 +1222,21 @@ function parseBody(bytes?: ArrayBuffer): JsonObject {
   } catch {
     throw new PoolError(400, "Invalid JSON request body");
   }
+}
+
+function requestSessionId(source: JsonObject | Request): string {
+  const get = (name: string): unknown =>
+    source instanceof Request ? source.headers.get(name) : source[name];
+  for (const name of [
+    "session_id",
+    "session-id",
+    "x-session-id",
+    "x-session-affinity",
+  ]) {
+    const value = stringValue(get(name)).trim();
+    if (value) return value.slice(0, 256);
+  }
+  return "";
 }
 
 function parseJsonObject(value: string, message: string): JsonObject {
