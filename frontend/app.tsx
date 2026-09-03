@@ -43,10 +43,12 @@ type UsageWindow = {
   resetsAt: number;
 };
 type Account = {
+  provider?: "codex" | "gemini-cli";
   id: string;
   name: string;
   enabled: boolean;
-  accountId: string;
+  accountId?: string;
+  projectId?: string;
   email?: string;
   principalId: string;
   cooldownUntil: number;
@@ -90,7 +92,7 @@ type Stats = {
   retentionLimit?: number;
 };
 type Toast = { title: string; message: string; error?: boolean };
-type Dialog = "import" | "device" | "browser" | "key" | null;
+type Dialog = "import" | "device" | "browser" | "gemini" | "key" | null;
 type AppInfo = { version?: string; author?: string; repository?: string };
 
 const validViews = new Set([
@@ -537,6 +539,9 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
             <Button onClick={() => open("browser")}>
               {t("copyLinkLogin")}
             </Button>
+            <Button onClick={() => open("gemini")}>
+              {t("geminiLogin")}
+            </Button>
             <Button tone="primary" onClick={() => open("device")}>
               {t("chatgptLogin")}
             </Button>
@@ -547,7 +552,9 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
         <div class="list">
           {accounts.length ? (
             accounts.map((account: Account) => {
+              const isGemini = account.provider === "gemini-cli";
               const identity = account.email || account.principalId || "";
+              const workspace = isGemini ? account.projectId : account.accountId;
               const isRevealed = Boolean(revealed[account.id]);
               return (
                 <article class="account-row">
@@ -556,7 +563,12 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                       {(account.name || "A")[0].toUpperCase()}
                     </span>
                     <div>
-                      <h3>{account.name}</h3>
+                      <h3>
+                        {account.name}{" "}
+                        <span class="status disabled">
+                          {t(isGemini ? "providerGeminiCli" : "providerCodex")}
+                        </span>
+                      </h3>
                       <p class="masked-identity identity-line">
                         <span>{isRevealed ? identity : maskIdentity(identity)}</span>
                         <Button
@@ -577,10 +589,16 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                           <Icon name={isRevealed ? "eyeOff" : "eye"} />
                         </Button>
                       </p>
-                      <small class="identity-line">
-                        <span>{isRevealed ? account.accountId : maskIdentity(account.accountId)}</span>
-                      </small>
-                      {account.usage && !account.usage.error && (
+                      {workspace && (
+                        <small class="identity-line">
+                          <span>
+                            {t(isGemini ? "project" : "workspace")}: {isRevealed
+                              ? workspace
+                              : maskIdentity(workspace)}
+                          </span>
+                        </small>
+                      )}
+                      {!isGemini && account.usage && !account.usage.error && (
                         <small class="usage-snapshot">
                           {t("quotaCaptured", {
                             date: formatDate(locale, account.usage.capturedAt),
@@ -595,16 +613,25 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                       )}
                     </div>
                   </div>
-                  <Quota
-                    label={t("primaryQuota")}
-                    window={account.usage?.primary}
-                    error={account.usage?.error}
-                  />
-                  <Quota
-                    label={t("secondaryQuota")}
-                    window={account.usage?.secondary}
-                    error={account.usage?.error}
-                  />
+                  {isGemini ? (
+                    <>
+                      <div />
+                      <div />
+                    </>
+                  ) : (
+                    <>
+                      <Quota
+                        label={t("primaryQuota")}
+                        window={account.usage?.primary}
+                        error={account.usage?.error}
+                      />
+                      <Quota
+                        label={t("secondaryQuota")}
+                        window={account.usage?.secondary}
+                        error={account.usage?.error}
+                      />
+                    </>
+                  )}
                   <div>
                     <span
                       class={`status ${account.enabled && account.cooldownUntil <= Date.now() ? "healthy" : "disabled"}`}
@@ -623,7 +650,7 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                         ? ` · HTTP ${account.lastStatus}`
                         : ""}
                     </small>
-                    {account.lastResetAt && (
+                    {!isGemini && account.lastResetAt && (
                       <small>
                         {t("lastReset", {
                           date: formatDate(locale, account.lastResetAt),
@@ -636,9 +663,11 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
                     <Button onClick={() => rename(account)}>
                       {t("rename")}
                     </Button>
-                    <Button onClick={() => reset(account)}>
-                      {t("resetQuota")}
-                    </Button>
+                    {!isGemini && (
+                      <Button onClick={() => reset(account)}>
+                        {t("resetQuota")}
+                      </Button>
+                    )}
                     <Button onClick={() => toggle(account)}>
                       {account.enabled ? t("disable") : t("enable")}
                     </Button>
@@ -654,9 +683,14 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
               title={t("noAccounts")}
               text={t("noAccountsText")}
               actions={
-                <Button tone="primary" onClick={() => open("device")}>
-                  {t("chatgptLogin")}
-                </Button>
+                <>
+                  <Button onClick={() => open("gemini")}>
+                    {t("geminiLogin")}
+                  </Button>
+                  <Button tone="primary" onClick={() => open("device")}>
+                    {t("chatgptLogin")}
+                  </Button>
+                </>
               }
             />
           )}
@@ -1488,6 +1522,14 @@ function Dialogs({ dialog, close, reloadAccounts, reloadKeys, notify }: any) {
     );
   if (dialog === "key")
     return <KeyDialog close={close} reload={reloadKeys} notify={notify} />;
+  if (dialog === "gemini")
+    return (
+      <GeminiOAuthDialog
+        close={close}
+        reload={reloadAccounts}
+        notify={notify}
+      />
+    );
   return (
     <OAuthDialog
       mode={dialog}
@@ -1528,11 +1570,13 @@ function Modal({ title, subtitle, close, children, footer }: any) {
 function ImportDialog({ close, reload, notify }: any) {
   const { t } = useI18n();
   const [name, setName] = useState(""),
+    [provider, setProvider] = useState<"codex" | "gemini-cli">("codex"),
     [payload, setPayload] = useState("");
   const submit = async () => {
     try {
       const body = JSON.parse(payload);
       if (name.trim()) body.name = name.trim();
+      if (provider === "gemini-cli") body.provider = provider;
       await api("/admin/api/accounts", {
         method: "POST",
         body: JSON.stringify(body),
@@ -1565,6 +1609,18 @@ function ImportDialog({ close, reload, notify }: any) {
       }
     >
       <label>
+        {t("accountProvider")}
+        <select
+          value={provider}
+          onChange={(e) =>
+            setProvider(e.currentTarget.value as "codex" | "gemini-cli")
+          }
+        >
+          <option value="codex">{t("providerCodex")}</option>
+          <option value="gemini-cli">{t("providerGeminiCli")}</option>
+        </select>
+      </label>
+      <label>
         {t("displayName")}
         <input value={name} onInput={(e) => setName(e.currentTarget.value)} />
       </label>
@@ -1573,9 +1629,11 @@ function ImportDialog({ close, reload, notify }: any) {
         <textarea
           value={payload}
           onInput={(e) => setPayload(e.currentTarget.value)}
-          placeholder={
-            '{"tokens":{"access_token":"...","refresh_token":"..."}}'
-          }
+          placeholder={t(
+            provider === "gemini-cli"
+              ? "geminiCredentialsPlaceholder"
+              : "codexCredentialsPlaceholder",
+          )}
         />
       </label>
     </Modal>
@@ -1768,6 +1826,105 @@ function OAuthDialog({ mode, close, reload, notify }: any) {
             placeholder={t("callbackPlaceholder")}
           />
         </label>
+      )}
+    </Modal>
+  );
+}
+
+function GeminiOAuthDialog({ close, reload, notify }: any) {
+  const { t } = useI18n();
+  const [name, setName] = useState(""),
+    [login, setLogin] = useState<any>(null),
+    [authorizationCode, setAuthorizationCode] = useState("");
+  const start = async () => {
+    const popup = window.open("about:blank", "geminiOAuthLogin");
+    if (popup) popup.opener = null;
+    try {
+      const data = await api<any>("/admin/api/oauth/gemini/start", {
+        method: "POST",
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      setLogin(data.login);
+      if (popup) popup.location.href = data.login.authorizationUrl;
+    } catch (error) {
+      popup?.close();
+      notify(t("loginStartFailed"), message(error, t("requestFailed")), true);
+    }
+  };
+  const cancel = () => {
+    if (login)
+      api(`/admin/api/oauth/gemini/${encodeURIComponent(login.id)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    close();
+  };
+  const finish = async () => {
+    if (!authorizationCode.trim())
+      return notify(t("geminiCodeRequired"), t("geminiCodeHelp"), true);
+    try {
+      await api(`/admin/api/oauth/gemini/${encodeURIComponent(login.id)}`, {
+        method: "POST",
+        body: JSON.stringify({ authorizationCode: authorizationCode.trim() }),
+      });
+      await reload();
+      close();
+      notify(t("geminiAccountAdded"), t("geminiAccountAddedText"));
+    } catch (error) {
+      notify(t("loginIncomplete"), message(error, t("requestFailed")), true);
+    }
+  };
+  return (
+    <Modal
+      title={t("geminiOAuthTitle")}
+      subtitle={t("geminiOAuthSubtitle")}
+      close={cancel}
+      footer={
+        !login ? (
+          <Button tone="primary" onClick={start}>
+            {t("continueLogin")}
+          </Button>
+        ) : (
+          <>
+            <Button onClick={cancel}>{t("cancel")}</Button>
+            <Button tone="primary" onClick={finish}>
+              {t("completeGeminiLogin")}
+            </Button>
+          </>
+        )
+      }
+    >
+      <label>
+        {t("displayName")}
+        <small>{t("oauthNameHelp")}</small>
+        <input
+          value={name}
+          disabled={!!login}
+          onInput={(e) => setName(e.currentTarget.value)}
+        />
+      </label>
+      {login && (
+        <>
+          <label>
+            {t("geminiAuthorizationPage")}
+            <a
+              class="button"
+              href={login.authorizationUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {t("openGeminiAuthorization")}
+            </a>
+          </label>
+          <label>
+            {t("geminiAuthorizationCode")}
+            <small>{t("geminiCodeHelp")}</small>
+            <textarea
+              value={authorizationCode}
+              onInput={(e) => setAuthorizationCode(e.currentTarget.value)}
+              placeholder={t("geminiCodePlaceholder")}
+            />
+          </label>
+        </>
       )}
     </Modal>
   );

@@ -1,4 +1,12 @@
 import { PoolError } from "./pool";
+import type { AccountProvider } from "./pool";
+import {
+  finalizeGeminiResponse,
+  GEMINI_GENERATE_CONTENT_URL,
+  geminiHeaders,
+  geminiRequestBody,
+  prepareGeminiRequest,
+} from "./gemini-api";
 
 const UPSTREAM_RESPONSES_URL =
   "https://chatgpt.com/backend-api/codex/responses";
@@ -25,7 +33,14 @@ export interface UpstreamAccount {
   accountId: string;
 }
 
+export interface SelectedUpstreamAccount {
+  accessToken: string;
+  accountId?: string;
+  projectId?: string;
+}
+
 export interface PreparedProxyRequest {
+  provider: AccountProvider;
   kind: "responses" | "chat" | "models";
   model: string;
   streaming: boolean;
@@ -36,6 +51,11 @@ export interface PreparedProxyRequest {
 
 export interface ProxyRequestOptions {
   serviceTier?: "standard" | "fast";
+}
+
+export interface SelectedUpstreamRequest {
+  url: string;
+  init: RequestInit;
 }
 
 export async function readRequestBody(request: Request): Promise<ArrayBuffer> {
@@ -77,6 +97,7 @@ export function prepareProxyRequest(
 ): PreparedProxyRequest {
   if (pathname === "/v1/models") {
     return {
+      provider: "codex",
       kind: "models",
       model: "model-catalog",
       streaming: false,
@@ -85,9 +106,56 @@ export function prepareProxyRequest(
     };
   }
   const body = parseBody(bodyBytes);
+  if (stringValue(body.model).trim().toLowerCase().startsWith("gemini-")) {
+    if (pathname !== "/v1/responses" && pathname !== "/v1/chat/completions")
+      throw new PoolError(404, "Not found");
+    const kind = pathname === "/v1/responses" ? "responses" : "chat";
+    const gemini = prepareGeminiRequest(kind, body);
+    return {
+      provider: "gemini-cli",
+      kind,
+      model: gemini.model,
+      streaming: body.stream === true,
+      upstreamUrl: GEMINI_GENERATE_CONTENT_URL,
+      method: "POST",
+      body: encoder.encode(JSON.stringify(gemini.request)),
+    };
+  }
   if (pathname === "/v1/responses") return prepareResponsesRequest(body, options);
   if (pathname === "/v1/chat/completions") return prepareChatRequest(body, options);
   throw new PoolError(404, "Not found");
+}
+
+export function prepareSelectedUpstreamRequest(
+  request: Request,
+  prepared: PreparedProxyRequest,
+  account: SelectedUpstreamAccount,
+): SelectedUpstreamRequest {
+  if (prepared.provider === "gemini-cli") {
+    const raw = prepared.body
+      ? parseJsonObject(new TextDecoder().decode(prepared.body), "Invalid prepared Gemini request")
+      : {};
+    return {
+      url: prepared.upstreamUrl,
+      init: {
+        method: prepared.method,
+        headers: geminiHeaders(account.accessToken),
+        body: geminiRequestBody({ model: prepared.model, request: raw }, account.projectId || "") as BodyInit,
+        redirect: "manual",
+      },
+    };
+  }
+  if (!account.accountId)
+    throw new PoolError(503, "Selected Codex account has no account ID");
+  return {
+    url: prepared.upstreamUrl,
+    init: {
+      method: prepared.method,
+      headers: upstreamHeaders(request, { accessToken: account.accessToken, accountId: account.accountId }, prepared.kind),
+      body: prepared.body as BodyInit | undefined,
+      redirect: "manual",
+    },
+  };
 }
 
 export function upstreamHeaders(
@@ -131,6 +199,13 @@ export async function finalizeUpstreamResponse(
   response: Response,
 ): Promise<Response> {
   if (!response.ok) return response;
+  if (prepared.provider === "gemini-cli")
+    return finalizeGeminiResponse(
+      prepared.kind as "responses" | "chat",
+      prepared.streaming,
+      prepared.model,
+      response,
+    );
   if (prepared.kind === "models") {
     const payload = await readJsonResponse(response, 2 * 1024 * 1024);
     return Response.json(modelsFromUpstream(payload));
@@ -347,6 +422,7 @@ function prepareResponsesRequest(
   if (!("parallel_tool_calls" in body)) body.parallel_tool_calls = false;
   body.reasoning = reasoning;
   return {
+    provider: "codex",
     kind: "responses",
     model,
     streaming: clientStream,
@@ -428,6 +504,7 @@ function prepareChatRequest(
   if (typeof body.prompt_cache_key === "string")
     upstream.prompt_cache_key = body.prompt_cache_key;
   return {
+    provider: "codex",
     kind: "chat",
     model,
     streaming: body.stream === true,

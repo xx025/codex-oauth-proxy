@@ -4,7 +4,13 @@ export interface EgressEnv {
   NATIVE_EGRESS?: Fetcher;
 }
 
-const ALLOWED_HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
+const ALLOWED_HOSTS = new Set([
+  "chatgpt.com",
+  "auth.openai.com",
+  "oauth2.googleapis.com",
+  "www.googleapis.com",
+  "cloudcode-pa.googleapis.com",
+]);
 
 export function createUpstreamFetch(env: EgressEnv): typeof fetch {
   if (!env.NATIVE_EGRESS) throw new PoolError(500, "Native egress binding is not configured");

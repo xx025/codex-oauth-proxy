@@ -2,10 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   bufferChatCompletion,
   bufferResponses,
+  finalizeUpstreamResponse,
   modelsFromUpstream,
   prepareProxyRequest,
+  prepareSelectedUpstreamRequest,
   transformChatStream,
 } from "../src/api";
+import {
+  bufferGeminiChat,
+  bufferGeminiResponses,
+  transformGeminiChatStream,
+  transformGeminiResponsesStream,
+} from "../src/gemini-api";
 
 const encoder = new TextEncoder();
 
@@ -32,7 +40,157 @@ function upstreamEvents(): string {
   ].join("");
 }
 
+function geminiEvents(): string {
+  return [
+    'data: {"response":{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"hello "}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"thoughtsTokenCount":2,"totalTokenCount":8,"cachedContentTokenCount":3}}}\n\n',
+    'data: {"response":{"candidates":[{"content":{"parts":[{"text":"world"},{"functionCall":{"id":"call_1","name":"lookup","args":{"city":"Paris"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":2,"totalTokenCount":9,"cachedContentTokenCount":3}}}\n\n',
+  ].join("");
+}
+
 describe("Cloudflare-native API proxy", () => {
+  it("prepares Responses input as a Gemini Code Assist GenerateContent request", () => {
+    const prepared = prepareProxyRequest(
+      "/v1/responses",
+      body({
+        model: "gemini-2.5-pro",
+        instructions: "Be concise",
+        input: [
+          { role: "user", content: [{ type: "input_text", text: "Look" }, { type: "input_image", image_url: "data:image/png;base64,YWJj" }] },
+          { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"city":"Paris"}' },
+          { type: "function_call_output", call_id: "call_1", output: '{"temperature":20}' },
+          { role: "user", content: [{ type: "input_image", image_url: "https://example.com/photo.jpg" }] },
+        ],
+        tools: [{ type: "function", function: { name: "lookup", description: "Weather", parameters: { type: "object" } } }],
+        tool_choice: "required",
+        max_output_tokens: 100,
+        temperature: 0.2,
+      }),
+    );
+    expect(prepared).toMatchObject({
+      provider: "gemini-cli",
+      kind: "responses",
+      model: "gemini-2.5-pro",
+      streaming: false,
+      upstreamUrl: "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+    });
+    const request = JSON.parse(new TextDecoder().decode(prepared.body));
+    expect(request).toMatchObject({
+      systemInstruction: { parts: [{ text: "Be concise" }] },
+      tools: [{ functionDeclarations: [{ name: "lookup", description: "Weather" }] }],
+      toolConfig: { functionCallingConfig: { mode: "ANY" } },
+      generationConfig: { maxOutputTokens: 100, temperature: 0.2 },
+    });
+    expect(request.contents).toEqual([
+      { role: "user", parts: [{ text: "Look" }, { inlineData: { mimeType: "image/png", data: "YWJj" } }] },
+      { role: "model", parts: [{ functionCall: { id: "call_1", name: "lookup", args: { city: "Paris" } } }] },
+      { role: "user", parts: [{ functionResponse: { id: "call_1", name: "lookup", response: { temperature: 20 } } }] },
+      { role: "user", parts: [{ fileData: { fileUri: "https://example.com/photo.jpg" } }] },
+    ]);
+
+    const selected = prepareSelectedUpstreamRequest(
+      new Request("https://relay/v1/responses"),
+      prepared,
+      { accessToken: "Bearer token", projectId: "project-1" },
+    );
+    expect(selected.url).toBe(prepared.upstreamUrl);
+    expect(new Headers(selected.init.headers).get("authorization")).toBe("Bearer token");
+    expect(JSON.parse(new TextDecoder().decode(selected.init.body as Uint8Array))).toEqual({
+      model: "gemini-2.5-pro",
+      project: "project-1",
+      request,
+    });
+  });
+
+  it("keeps Chat message and tool result order in Gemini requests", () => {
+    const prepared = prepareProxyRequest("/v1/chat/completions", body({
+      model: "gemini-2.5-flash",
+      stream: true,
+      messages: [
+        { role: "system", content: "Help" },
+        { role: "user", content: "Weather?" },
+        { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "weather", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "c1", content: "sunny" },
+      ],
+    }));
+    const request = JSON.parse(new TextDecoder().decode(prepared.body));
+    expect(prepared).toMatchObject({ provider: "gemini-cli", kind: "chat", streaming: true });
+    expect(request.contents.map((content: { role: string }) => content.role)).toEqual(["user", "model", "user"]);
+    expect(request.contents[2]).toMatchObject({
+      parts: [{ functionResponse: { id: "c1", name: "weather", response: { output: "sunny" } } }],
+    });
+  });
+
+  it("rejects unsupported Gemini request fields instead of falling through to Codex", () => {
+    expect(() => prepareProxyRequest("/v1/chat/completions", body({
+      model: "gemini-2.5-pro",
+      messages: [],
+      n: 2,
+    }))).toThrow("Gemini CLI only supports n=1");
+  });
+
+  it("returns Gemini upstream errors unchanged for account failover", async () => {
+    const prepared = prepareProxyRequest("/v1/responses", body({
+      model: "gemini-2.5-pro",
+      input: "Hello",
+    }));
+    const upstream = new Response('{"error":"quota"}', {
+      status: 429,
+      headers: { "retry-after": "10" },
+    });
+    const result = await finalizeUpstreamResponse(prepared, upstream);
+    expect(result).toBe(upstream);
+    expect(result.headers.get("retry-after")).toBe("10");
+    expect(await result.text()).toBe('{"error":"quota"}');
+  });
+
+  it("transforms Gemini SSE into Responses and Chat streams", async () => {
+    const responsesText = await new Response(
+      transformGeminiResponsesStream(stream(geminiEvents().slice(0, 90), geminiEvents().slice(90)), "gemini-2.5-pro"),
+    ).text();
+    expect(responsesText).toContain('"type":"response.reasoning_summary_text.delta","delta":"thinking"');
+    expect(responsesText).toContain('"type":"response.output_text.delta","delta":"world"');
+    expect(responsesText).toContain('"type":"response.function_call_arguments.delta"');
+    expect(responsesText).toContain('"input_tokens":5,"output_tokens":4,"total_tokens":9');
+    expect(responsesText.endsWith("data: [DONE]\n\n")).toBe(true);
+
+    const chatText = await new Response(
+      transformGeminiChatStream(stream(geminiEvents()), "gemini-2.5-pro"),
+    ).text();
+    expect(chatText).toContain('"reasoning_content":"thinking"');
+    expect(chatText).toContain('"content":"hello "');
+    expect(chatText).toContain('"tool_calls":[{"index":0,"id":"call_1"');
+    expect(chatText).toContain('"finish_reason":"tool_calls"');
+    expect(chatText).toContain('"prompt_tokens_details":{"cached_tokens":3}');
+  });
+
+  it("buffers Gemini SSE for non-streaming Responses and Chat clients", async () => {
+    const responses = await bufferGeminiResponses(stream(geminiEvents()), "gemini-2.5-pro");
+    expect(responses).toMatchObject({
+      object: "response",
+      status: "completed",
+      model: "gemini-2.5-pro",
+      usage: { input_tokens: 5, output_tokens: 4, total_tokens: 9 },
+      output: [
+        { type: "reasoning", summary: [{ text: "thinking" }] },
+        { type: "message", content: [{ text: "hello world" }] },
+        { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"city":"Paris"}' },
+      ],
+    });
+    const chat = await bufferGeminiChat(stream(geminiEvents()), "gemini-2.5-pro");
+    expect(chat).toMatchObject({
+      object: "chat.completion",
+      choices: [{
+        message: {
+          content: "hello world",
+          reasoning_content: "thinking",
+          tool_calls: [{ id: "call_1", function: { name: "lookup", arguments: '{"city":"Paris"}' } }],
+        },
+        finish_reason: "tool_calls",
+      }],
+      usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9 },
+    });
+  });
+
   it("converts chat completions requests into Responses requests", () => {
     const prepared = prepareProxyRequest(
       "/v1/chat/completions",

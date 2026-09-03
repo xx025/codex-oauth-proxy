@@ -1,11 +1,21 @@
+import {
+  discoverGeminiProject,
+  fetchGeminiUserInfo,
+  refreshGeminiTokens,
+} from "./gemini-auth";
+
+export type AccountProvider = "codex" | "gemini-cli";
+
 export interface AccountRecord {
+  provider: AccountProvider;
   id: string;
   name: string;
   enabled: boolean;
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
-  accountId: string;
+  accountId?: string;
+  projectId?: string;
   email?: string;
   principalId: string;
   createdAt: number;
@@ -20,10 +30,12 @@ export interface AccountRecord {
 }
 
 export interface AccountMetadata {
+  provider: AccountProvider;
   id: string;
   name: string;
   enabled: boolean;
-  accountId: string;
+  accountId?: string;
+  projectId?: string;
   email?: string;
   principalId: string;
   expiresAt: number;
@@ -169,11 +181,13 @@ export interface PoolStorage {
 }
 
 export interface ImportPayload {
+  provider?: AccountProvider;
   name?: string;
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
-  accountId: string;
+  accountId?: string;
+  projectId?: string;
   email?: string;
   principalId: string;
 }
@@ -350,7 +364,7 @@ export class AccountPoolCore {
     const settings = settingsFor(state);
     await Promise.all(
       state.accounts.map(async (account) => {
-        if (!account.enabled) return;
+        if (!account.enabled || account.provider === "gemini-cli") return;
         try {
           await this.refreshUsageForAccount(account, settings);
         } catch (error) {
@@ -368,12 +382,59 @@ export class AccountPoolCore {
   }
 
   async importAccount(payload: ImportPayload): Promise<AccountMetadata> {
-    validateImport(payload);
     const state = await this.load();
+    const provider = payload.provider ?? "codex";
+    payload = { ...payload, provider };
+    if (provider === "codex") validateImport(payload);
+    else validateGeminiCredentials(payload);
+    const settings = settingsFor(state);
+    if (provider === "gemini-cli") {
+      try {
+        if (
+          payload.expiresAt <=
+          this.now() + settings.tokenExpiryBufferMinutes * 60_000
+        ) {
+          Object.assign(
+            payload,
+            await refreshGeminiTokens(
+              {
+                accessToken: payload.accessToken,
+                refreshToken: payload.refreshToken,
+                expiresAt: payload.expiresAt,
+              },
+              this.oauthFetch,
+              this.now,
+            ),
+          );
+        }
+        if (!payload.email || !payload.principalId) {
+          const identity = await fetchGeminiUserInfo(
+            payload.accessToken,
+            this.oauthFetch,
+          );
+          payload.email = payload.email || identity.email;
+          payload.principalId =
+            payload.principalId || identity.principalId || "";
+        }
+        payload.projectId = await discoverGeminiProject(
+          payload.accessToken,
+          this.oauthFetch,
+          payload.projectId,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Gemini CLI setup failed";
+        throw new PoolError(502, message);
+      }
+      validateImport(payload);
+    }
     const now = this.now();
     const existing = state.accounts.find(
       (account) =>
-        account.accountId === payload.accountId &&
+        account.provider === provider &&
+        (provider === "codex"
+          ? account.accountId === payload.accountId
+          : account.projectId === payload.projectId) &&
         account.principalId === payload.principalId,
     );
     if (existing) {
@@ -383,6 +444,9 @@ export class AccountPoolCore {
       existing.accessToken = payload.accessToken;
       existing.refreshToken = payload.refreshToken;
       existing.expiresAt = payload.expiresAt;
+      existing.provider = provider;
+      existing.accountId = payload.accountId;
+      existing.projectId = payload.projectId;
       existing.enabled = true;
       existing.cooldownUntil = 0;
       existing.failureCount = 0;
@@ -393,6 +457,7 @@ export class AccountPoolCore {
     }
 
     const account: AccountRecord = {
+      provider,
       id: crypto.randomUUID(),
       name:
         payload.name?.trim() ||
@@ -403,6 +468,7 @@ export class AccountPoolCore {
       refreshToken: payload.refreshToken,
       expiresAt: payload.expiresAt,
       accountId: payload.accountId,
+      projectId: payload.projectId,
       email: payload.email,
       principalId: payload.principalId,
       createdAt: now,
@@ -450,6 +516,8 @@ export class AccountPoolCore {
     const state = await this.load();
     const settings = settingsFor(state);
     const account = requiredAccount(state, id);
+    if (account.provider === "gemini-cli")
+      throw new PoolError(409, "Gemini CLI accounts do not support quota reset");
     try {
       await this.resetAccount(account, settings);
     } catch (error) {
@@ -460,19 +528,25 @@ export class AccountPoolCore {
     return redactAccount(account);
   }
 
-  async select(excluded: string[] = []): Promise<AccountRecord> {
+  async select(
+    excluded: string[] = [],
+    provider: AccountProvider = "codex",
+  ): Promise<AccountRecord> {
     const state = await this.load();
     const settings = settingsFor(state);
     const now = this.now();
     const excludedSet = new Set(excluded);
-    if (state.accounts.length === 0)
-      throw new PoolError(503, "No accounts configured");
+    if (!state.accounts.some((account) => account.provider === provider))
+      throw new PoolError(503, `No ${provider} accounts configured`);
 
     const candidateIndexes = Array.from(
       { length: state.accounts.length },
       (_, offset) => (state.cursor + offset) % state.accounts.length,
     );
-    if (settings.selectionStrategy === "quota_weighted") {
+    if (
+      provider === "codex" &&
+      settings.selectionStrategy === "quota_weighted"
+    ) {
       await this.refreshQuotaWeights(state, candidateIndexes, excludedSet, settings, now);
     }
     if (settings.selectionStrategy === "least_failures") {
@@ -493,6 +567,7 @@ export class AccountPoolCore {
       const account = state.accounts[index];
       if (
         !account.enabled ||
+        account.provider !== provider ||
         account.cooldownUntil > now ||
         excludedSet.has(account.id)
       )
@@ -500,6 +575,7 @@ export class AccountPoolCore {
       try {
         await this.refreshIfNeeded(account, settings);
         if (
+          account.provider === "codex" &&
           settings.autoResetExhaustedAccounts &&
           quotaExhausted(account.usage, now) &&
           shouldAttemptAutoReset(account, now)
@@ -514,7 +590,11 @@ export class AccountPoolCore {
         account.updatedAt = now;
         continue;
       }
-      if (settings.autoResetExhaustedAccounts && quotaExhausted(account.usage, now))
+      if (
+        account.provider === "codex" &&
+        settings.autoResetExhaustedAccounts &&
+        quotaExhausted(account.usage, now)
+      )
         continue;
       state.cursor = (index + 1) % state.accounts.length;
       await this.storage.put(state);
@@ -526,6 +606,7 @@ export class AccountPoolCore {
       .filter(
         (account) =>
           account.enabled &&
+          account.provider === provider &&
           account.cooldownUntil > now &&
           !excludedSet.has(account.id),
       )
@@ -552,6 +633,7 @@ export class AccountPoolCore {
       account.cooldownUntil = 0;
     } else if (status === 429) {
       if (
+        account.provider === "codex" &&
         settings.autoResetExhaustedAccounts &&
         quotaExhausted(account.usage, now) &&
         shouldAttemptAutoReset(account, now)
@@ -685,6 +767,16 @@ export class AccountPoolCore {
       this.now() + settings.tokenExpiryBufferMinutes * 60_000
     )
       return;
+    if (account.provider === "gemini-cli") {
+      Object.assign(
+        account,
+        await refreshGeminiTokens(account, this.oauthFetch, this.now),
+      );
+      account.updatedAt = this.now();
+      account.failureCount = 0;
+      account.cooldownUntil = 0;
+      return;
+    }
     const response = await this.oauthFetch(OAUTH_TOKEN_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -730,7 +822,7 @@ export class AccountPoolCore {
           accept: "application/json",
           "content-type": "application/json",
           authorization: `Bearer ${account.accessToken}`,
-          "chatgpt-account-id": account.accountId,
+          "chatgpt-account-id": account.accountId!,
         },
         body: JSON.stringify({ redeem_request_id: crypto.randomUUID() }),
       });
@@ -815,6 +907,7 @@ export class AccountPoolCore {
         const account = state.accounts[index];
         if (
           !account.enabled ||
+          account.provider === "gemini-cli" ||
           account.cooldownUntil > now ||
           excludedSet.has(account.id) ||
           !quotaWeightStale(account.usage, now)
@@ -838,7 +931,7 @@ export class AccountPoolCore {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${account.accessToken}`,
-        "chatgpt-account-id": account.accountId,
+        "chatgpt-account-id": account.accountId!,
       },
     });
   }
@@ -848,7 +941,7 @@ export class AccountPoolCore {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${account.accessToken}`,
-        "chatgpt-account-id": account.accountId,
+        "chatgpt-account-id": account.accountId!,
       },
     });
     if (!response.ok)
@@ -857,7 +950,9 @@ export class AccountPoolCore {
   }
 
   private async load(): Promise<PoolState> {
-    return (await this.storage.get()) ?? { accounts: [], cursor: 0 };
+    const state = (await this.storage.get()) ?? { accounts: [], cursor: 0 };
+    for (const account of state.accounts) account.provider ??= "codex";
+    return state;
   }
 }
 
@@ -865,6 +960,7 @@ export function parseImportPayload(input: unknown): ImportPayload {
   if (!input || typeof input !== "object")
     throw new PoolError(400, "Invalid JSON payload");
   const root = input as Record<string, unknown>;
+  const provider = parseProvider(root.provider);
   const tokens = objectValue(root.tokens);
   const claude = objectValue(root.claudeAiOauth);
   const source = tokens ?? claude ?? root;
@@ -891,14 +987,22 @@ export function parseImportPayload(input: unknown): ImportPayload {
     stringValue(source.user_id) ||
     identity.principalId;
   const expiresAt =
+    numberValue(source.expiry_date) ||
     numberValue(source.expiresAt) ||
     numberValue(source.expires_at) ||
     jwtExpiry(accessToken);
   return {
+    provider,
     name: stringValue(root.name),
     accessToken,
     refreshToken,
-    accountId,
+    accountId: provider === "codex" ? accountId : undefined,
+    projectId:
+      stringValue(source.project_id) ||
+      stringValue(source.projectId) ||
+      stringValue(root.project_id) ||
+      stringValue(root.projectId) ||
+      undefined,
     email: email || undefined,
     principalId,
     expiresAt,
@@ -941,19 +1045,25 @@ export function tokenIdentity(
 }
 
 function validateImport(payload: ImportPayload): void {
+  const provider = payload.provider ?? "codex";
+  if (provider !== "codex" && provider !== "gemini-cli")
+    throw new PoolError(400, "Invalid account provider");
   if (
     !payload.accessToken ||
     !payload.refreshToken ||
-    !payload.accountId ||
     !payload.principalId ||
     !Number.isFinite(payload.expiresAt) ||
     payload.expiresAt <= 0
   ) {
     throw new PoolError(
       400,
-      "Credentials require access token, refresh token, workspace account ID, user identity, and expiry",
+      "Credentials require access token, refresh token, user identity, and expiry",
     );
   }
+  if (provider === "codex" && !payload.accountId)
+    throw new PoolError(400, "Codex credentials require a workspace account ID");
+  if (provider === "gemini-cli" && !payload.projectId)
+    throw new PoolError(400, "Gemini CLI credentials require a Code Assist project");
   if (payload.name && payload.name.length > 80)
     throw new PoolError(400, "Account name is too long");
   if (payload.email && payload.email.length > 320)
@@ -962,12 +1072,32 @@ function validateImport(payload: ImportPayload): void {
     throw new PoolError(400, "Account identity is too long");
 }
 
+function validateGeminiCredentials(payload: ImportPayload): void {
+  if (
+    !payload.accessToken ||
+    !payload.refreshToken ||
+    !Number.isFinite(payload.expiresAt) ||
+    payload.expiresAt <= 0
+  ) {
+    throw new PoolError(
+      400,
+      "Gemini CLI credentials require access token, refresh token, and expiry",
+    );
+  }
+  if (payload.name && payload.name.length > 80)
+    throw new PoolError(400, "Account name is too long");
+  if (payload.email && payload.email.length > 320)
+    throw new PoolError(400, "Account email is too long");
+}
+
 function redactAccount(account: AccountRecord): AccountMetadata {
   const {
     accessToken: _accessToken,
     refreshToken: _refreshToken,
     ...metadata
   } = account;
+  if (metadata.provider === "gemini-cli") delete metadata.accountId;
+  else delete metadata.projectId;
   return metadata;
 }
 
@@ -1020,6 +1150,12 @@ function settingsFor(state: PoolState): PoolSettings {
 function parseSelectionStrategy(value: unknown): SelectionStrategy {
   if (value === "round_robin" || value === "least_failures" || value === "quota_weighted") return value;
   throw new PoolError(400, "Invalid account selection strategy");
+}
+
+function parseProvider(value: unknown): AccountProvider {
+  if (value === undefined || value === null || value === "") return "codex";
+  if (value === "codex" || value === "gemini-cli") return value;
+  throw new PoolError(400, "Invalid account provider");
 }
 
 function parseServiceTier(value: unknown): ServiceTier {

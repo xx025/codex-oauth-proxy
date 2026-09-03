@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { AccountPoolCore, PoolError, PoolSettings, PoolState, RequestRecordInput, parseImportPayload } from "./pool";
+import { AccountPoolCore, AccountProvider, PoolError, PoolSettings, PoolState, RequestRecordInput, parseImportPayload } from "./pool";
 import {
   BrowserLoginSession,
   DeviceLoginSession,
@@ -13,8 +13,15 @@ import {
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { createUpstreamFetch } from "./egress";
 import { RequestMetadata, emptyTokenUsage, readTokenUsage } from "./metrics";
-import { finalizeUpstreamResponse, prepareProxyRequest, readRequestBody, upstreamHeaders } from "./api";
+import { finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, SelectedUpstreamAccount } from "./api";
 import { handleMcp } from "./mcp";
+import {
+  GeminiAuthorizationInput,
+  GeminiLoginSession,
+  beginGeminiLogin,
+  completeGeminiLogin,
+  publicGeminiLogin,
+} from "./gemini-auth";
 
 interface Env {
   ACCOUNT_POOL: DurableObjectNamespace<AccountPool>;
@@ -140,13 +147,24 @@ export class AccountPool extends DurableObject<Env> {
         await this.ctx.storage.put(this.browserLoginKey(session.id), session);
         return json({ login: publicBrowserLogin(session) }, 201);
       }
+      if (url.pathname === "/oauth/gemini/start" && request.method === "POST") {
+        const { name } = await request.json() as { name?: string };
+        await this.pruneGeminiLogins();
+        const session = await beginGeminiLogin(Date.now, name);
+        await this.ctx.storage.put(this.geminiLoginKey(session.id), session);
+        return json({ login: publicGeminiLogin(session) }, 201);
+      }
       const browserMatch = url.pathname.match(/^\/oauth\/browser\/([0-9a-f-]+)$/i);
       if (browserMatch && request.method === "POST") {
         const key = this.browserLoginKey(browserMatch[1]);
         const session = await this.ctx.storage.get<BrowserLoginSession>(key);
         if (!session) throw new PoolError(404, "Browser login session not found");
         const { callbackUrl } = await request.json() as { callbackUrl?: string };
-        const credentials = await completeBrowserLogin(session, callbackUrl ?? "", this.upstreamFetch);
+        const credentials = await completeBrowserLogin(
+          session,
+          callbackUrl ?? "",
+          (input, init) => this.fetchUpstream(input, init),
+        );
         const account = await this.core.importAccount(credentials);
         await this.ctx.storage.delete(key);
         return json({ status: "complete", account });
@@ -160,7 +178,10 @@ export class AccountPool extends DurableObject<Env> {
         const key = this.deviceLoginKey(deviceMatch[1]);
         const session = await this.ctx.storage.get<DeviceLoginSession>(key);
         if (!session) throw new PoolError(404, "Device login session not found");
-        const result = await pollDeviceLogin(session, this.upstreamFetch);
+        const result = await pollDeviceLogin(
+          session,
+          (input, init) => this.fetchUpstream(input, init),
+        );
         if (result.pending) return json({ status: "pending" }, 202);
         const account = await this.core.importAccount(result.credentials);
         await this.ctx.storage.delete(key);
@@ -168,6 +189,24 @@ export class AccountPool extends DurableObject<Env> {
       }
       if (deviceMatch && request.method === "DELETE") {
         await this.ctx.storage.delete(this.deviceLoginKey(deviceMatch[1]));
+        return json({ ok: true });
+      }
+      const geminiMatch = url.pathname.match(/^\/oauth\/gemini\/([0-9a-f-]+)$/i);
+      if (geminiMatch && request.method === "POST") {
+        const key = this.geminiLoginKey(geminiMatch[1]);
+        const session = await this.ctx.storage.get<GeminiLoginSession>(key);
+        if (!session) throw new PoolError(404, "Gemini login session not found");
+        const credentials = await completeGeminiLogin(
+          session,
+          await request.json() as GeminiAuthorizationInput,
+          (input, init) => this.fetchUpstream(input, init),
+        );
+        const account = await this.core.importAccount(credentials);
+        await this.ctx.storage.delete(key);
+        return json({ status: "complete", account });
+      }
+      if (geminiMatch && request.method === "DELETE") {
+        await this.ctx.storage.delete(this.geminiLoginKey(geminiMatch[1]));
         return json({ ok: true });
       }
       const resetMatch = url.pathname.match(/^\/accounts\/([^/]+)\/reset$/);
@@ -184,8 +223,11 @@ export class AccountPool extends DurableObject<Env> {
         return json({ ok: true });
       }
       if (url.pathname === "/select" && request.method === "POST") {
-        const { excluded = [] } = await request.json() as { excluded?: string[] };
-        return json({ account: await this.core.select(excluded) });
+        const { excluded = [], provider = "codex" } = await request.json() as {
+          excluded?: string[];
+          provider?: AccountProvider;
+        };
+        return json({ account: await this.core.select(excluded, provider) });
       }
       if (url.pathname === "/report" && request.method === "POST") {
         const report = await request.json() as { id: string; status: number; retryAfterSeconds?: number };
@@ -233,6 +275,10 @@ export class AccountPool extends DurableObject<Env> {
     return `browser-login:${id}`;
   }
 
+  private geminiLoginKey(id: string): string {
+    return `gemini-login:${id}`;
+  }
+
   private async pruneDeviceLogins(): Promise<void> {
     const sessions = await this.ctx.storage.list<DeviceLoginSession>({ prefix: "device-login:" });
     const expired = [...sessions.entries()]
@@ -243,6 +289,16 @@ export class AccountPool extends DurableObject<Env> {
 
   private async pruneBrowserLogins(): Promise<void> {
     const sessions = await this.ctx.storage.list<BrowserLoginSession>({ prefix: "browser-login:" });
+    const expired = [...sessions.entries()]
+      .filter(([, session]) => session.expiresAt <= Date.now())
+      .map(([key]) => key);
+    if (expired.length) await this.ctx.storage.delete(expired);
+  }
+
+  private async pruneGeminiLogins(): Promise<void> {
+    const sessions = await this.ctx.storage.list<GeminiLoginSession>({
+      prefix: "gemini-login:",
+    });
     const expired = [...sessions.entries()]
       .filter(([, session]) => session.expiresAt <= Date.now())
       .map(([key]) => key);
@@ -363,9 +419,9 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
   const upstreamFetch = createUpstreamFetch(env);
 
   for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {
-    let account: { id: string; accessToken: string; accountId: string };
+    let account: SelectedUpstreamAccount & { id: string };
     try {
-      account = await selectAccount(env, excluded);
+      account = await selectAccount(env, excluded, prepared.provider);
     } catch (error) {
       if (lastAttempt) return trackRequestResponse(
         stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt,
@@ -373,12 +429,8 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
       throw error;
     }
     excluded.push(account.id);
-    const response = await upstreamFetch(prepared.upstreamUrl, {
-      method: prepared.method,
-      headers: upstreamHeaders(request, account, prepared.kind),
-      body: prepared.body as BodyInit | undefined,
-      redirect: "manual",
-    });
+    const upstreamRequest = prepareSelectedUpstreamRequest(request, prepared, account);
+    const response = await upstreamFetch(upstreamRequest.url, upstreamRequest.init);
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
     const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
@@ -518,15 +570,20 @@ async function loadPoolSettings(env: Env): Promise<PoolSettings> {
   return result.settings;
 }
 
-async function selectAccount(env: Env, excluded: string[]): Promise<{
-  id: string; accessToken: string; accountId: string;
-}> {
+async function selectAccount(
+  env: Env,
+  excluded: string[],
+  provider: AccountProvider,
+): Promise<SelectedUpstreamAccount & { id: string }> {
   const response = await accountPoolStub(env).fetch("https://account-pool/select", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ excluded }),
+    body: JSON.stringify({ excluded, provider }),
   });
-  const result = await response.json() as { account?: { id: string; accessToken: string; accountId: string }; error?: string };
+  const result = await response.json() as {
+    account?: SelectedUpstreamAccount & { id: string };
+    error?: string;
+  };
   if (!response.ok || !result.account) throw new PoolError(response.status, result.error || "Account selection failed", parseRetryAfter(response.headers.get("retry-after")));
   return result.account;
 }
