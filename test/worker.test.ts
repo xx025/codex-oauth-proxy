@@ -71,6 +71,7 @@ function environment(options: {
   const reports: Array<{ id: string; status: number }> = [];
   const records: RequestRecordInput[] = [];
   const selections: AccountProvider[] = [];
+  const thoughtSignatureBatches: string[][] = [];
   let modelCatalogCache: { status: number; body: string; contentType?: string; expiresAt: number; createdAt: number } | undefined;
   const stub = {
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -103,6 +104,11 @@ function environment(options: {
       }
       if (url.pathname === "/custom-apis") return Response.json({ customApis: [] });
       if (url.pathname === "/custom-api-routing") return Response.json({ candidates: options.customCandidates ?? [] });
+      if (url.pathname === "/thought-signatures/get") {
+        const payload = await request.json() as { functionCallIds: string[] };
+        thoughtSignatureBatches.push(payload.functionCallIds);
+        return Response.json({ signatures: {} });
+      }
       if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
         if (!modelCatalogCache || modelCatalogCache.expiresAt <= Date.now()) return new Response(null, { status: 204 });
         return new Response(modelCatalogCache.body, {
@@ -181,6 +187,7 @@ function environment(options: {
     reports,
     records,
     selections,
+    thoughtSignatureBatches,
     executorShards,
     env,
   };
@@ -506,6 +513,29 @@ describe("edge worker", () => {
         { type: "message", content: [{ text: "gemini ok" }] },
       ],
     });
+  });
+
+  it("batches thought signature lookups for long Gemini tool histories", async () => {
+    const upstream = vi.fn(async () => geminiStream());
+    const { env, thoughtSignatureBatches } = environment({
+      upstream,
+      providerAccountIds: { antigravity: ["ag"] },
+    });
+    const input = Array.from({ length: 129 }, (_, index) => ({
+      type: "function_call",
+      call_id: `call-${index}`,
+      name: "lookup",
+      arguments: "{}",
+    }));
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gemini-2.5-pro", input, session_id: "long-session" }),
+    }), env as never, context().ctx);
+
+    expect(response.status).toBe(200);
+    expect(thoughtSignatureBatches.map((batch) => batch.length)).toEqual([128, 1]);
+    expect(thoughtSignatureBatches.flat()).toEqual(input.map((item) => item.call_id));
   });
 
   it("handles consecutive Antigravity retries across accounts", async () => {

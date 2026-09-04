@@ -39,6 +39,7 @@ const MAX_RETRY_RESPONSE_BYTES = 64 * 1024;
 const PROXY_EXECUTOR_SHARDS = 32;
 const THOUGHT_SIGNATURE_TTL_MS = 60 * 60 * 1000;
 const THOUGHT_SIGNATURE_KEY_PREFIX = "thought-signature:";
+const MAX_THOUGHT_SIGNATURE_IDS = 128;
 const INTERNAL_ROUTING_HEADER = "x-ecrelay-internal-routing";
 const encoder = new TextEncoder();
 
@@ -741,15 +742,21 @@ async function getThoughtSignatures(
   model: string,
   functionCallIds: string[],
 ): Promise<Record<string, string>> {
-  const response = await accountPoolStub(env).fetch("https://account-pool/thought-signatures/get", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId, model, functionCallIds }),
-  });
-  const result = await response.json() as { signatures?: Record<string, string>; error?: string };
-  if (!response.ok || !result.signatures)
-    throw new PoolError(response.status, result.error || "Thought signatures could not be loaded");
-  return result.signatures;
+  const batches: string[][] = [];
+  for (let offset = 0; offset < functionCallIds.length; offset += MAX_THOUGHT_SIGNATURE_IDS)
+    batches.push(functionCallIds.slice(offset, offset + MAX_THOUGHT_SIGNATURE_IDS));
+  const results = await Promise.all(batches.map(async (batch) => {
+    const response = await accountPoolStub(env).fetch("https://account-pool/thought-signatures/get", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId, model, functionCallIds: batch }),
+    });
+    const result = await response.json() as { signatures?: Record<string, string>; error?: string };
+    if (!response.ok || !result.signatures)
+      throw new PoolError(response.status, result.error || "Thought signatures could not be loaded");
+    return result.signatures;
+  }));
+  return Object.assign({}, ...results);
 }
 
 async function putThoughtSignatures(
@@ -967,8 +974,8 @@ function thoughtSignatureLookupPayload(value: unknown): {
   const payload = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const sessionId = boundedString(payload.sessionId, "sessionId", 512);
   const model = boundedString(payload.model, "model", 256);
-  if (!Array.isArray(payload.functionCallIds) || payload.functionCallIds.length > 128)
-    throw new PoolError(400, "functionCallIds must be an array of at most 128 entries");
+  if (!Array.isArray(payload.functionCallIds) || payload.functionCallIds.length > MAX_THOUGHT_SIGNATURE_IDS)
+    throw new PoolError(400, `functionCallIds must be an array of at most ${MAX_THOUGHT_SIGNATURE_IDS} entries`);
   const functionCallIds = [...new Set(payload.functionCallIds.map(
     (item) => boundedString(item, "functionCallId", 512),
   ))];
