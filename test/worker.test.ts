@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProxyExecutor, worker } from "../src/index";
-import { AccountProvider, RequestRecordInput } from "../src/pool";
+import { AccountProvider, RequestRecordInput, SelectedCustomApi } from "../src/pool";
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "../src/ui";
 
 function context() {
@@ -55,6 +55,7 @@ function environment(options: {
   upstream: (request: Request) => Promise<Response>;
   accountIds?: string[];
   providerAccountIds?: Partial<Record<AccountProvider, string[]>>;
+  customCandidates?: SelectedCustomApi[];
   settings?: Partial<{
     selectionStrategy: "round_robin" | "least_failures";
     maxAccountAttempts: number;
@@ -100,6 +101,8 @@ function environment(options: {
         records.push(await request.json() as RequestRecordInput);
         return Response.json({ ok: true }, { status: 201 });
       }
+      if (url.pathname === "/custom-apis") return Response.json({ customApis: [] });
+      if (url.pathname === "/custom-api-routing") return Response.json({ candidates: options.customCandidates ?? [] });
       if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
         if (!modelCatalogCache || modelCatalogCache.expiresAt <= Date.now()) return new Response(null, { status: 204 });
         return new Response(modelCatalogCache.body, {
@@ -352,6 +355,26 @@ describe("edge worker", () => {
     const catalog = await response.json() as { data: Array<{ id: string; object: string; family?: string }> };
     expect(catalog.data.some((m) => m.id === "gpt-5.6-sol")).toBe(true);
     expect(catalog.data.some((m) => m.id === "gemini-3.7-flash-high" && m.family === "antigravity")).toBe(true);
+  });
+
+  it("lightly tests a model through the protected admin API", async () => {
+    const upstream = vi.fn(async (request: Request) => {
+      expect(new URL(request.url).pathname).toBe("/backend-api/codex/responses");
+      const body = await request.json() as Record<string, unknown>;
+      expect(body.model).toBe("gpt-5.6-sol");
+      expect(body.stream).toBe(true);
+      return responsesStream("OK");
+    });
+    const { env } = environment({ upstream });
+    const response = await worker.fetch(new Request("https://example.test/admin/api/models/test", {
+      method: "POST",
+      headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-5.6-sol" }),
+    }), env as never, context().ctx);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, status: 200, text: "OK" });
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 
   it("serves Antigravity models when only Antigravity accounts are configured", async () => {
@@ -614,6 +637,52 @@ describe("edge worker", () => {
     expect(response.status).toBe(429);
     expect(upstream).toHaveBeenCalledTimes(1);
     expect(reports).toHaveLength(1);
+  });
+
+  it("routes models absent from the built-in catalog directly to a custom API", async () => {
+    const requests: Request[] = [];
+    const { env } = environment({
+      customCandidates: [{ id: "custom-1", name: "Custom", baseUrl: "https://custom.example/v1", apiKey: "custom-secret", priority: 10, fallback: false }],
+      upstream: async (request) => {
+        requests.push(request);
+        if (new URL(request.url).pathname === "/backend-api/codex/models") return Response.json(modelsPayload("gpt-5.6-sol"));
+        return Response.json({ id: "custom-response" });
+      },
+    });
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "custom-model", input: "hello" }),
+    }), env as never, context().ctx);
+
+    expect(await response.json()).toMatchObject({ id: "custom-response" });
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/backend-api/codex/models",
+      "/v1/responses",
+    ]);
+    expect(requests[1].headers.get("authorization")).toBe("Bearer custom-secret");
+  });
+
+  it("uses a configured custom fallback after built-in attempts fail", async () => {
+    const paths: string[] = [];
+    const { env } = environment({
+      customCandidates: [{ id: "custom-1", name: "Custom", baseUrl: "https://custom.example/v1", apiKey: "custom-secret", priority: 10, fallback: true }],
+      upstream: async (request) => {
+        const pathname = new URL(request.url).pathname;
+        paths.push(pathname);
+        if (pathname === "/backend-api/codex/models") return Response.json(modelsPayload("shared-model"));
+        if (pathname === "/backend-api/codex/responses") return new Response("built-in unavailable", { status: 502 });
+        return Response.json({ id: "fallback-response" });
+      },
+    });
+    const response = await worker.fetch(new Request("https://example.test/v1/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer proxy-secret", "content-type": "application/json" },
+      body: JSON.stringify({ model: "shared-model", input: "hello" }),
+    }), env as never, context().ctx);
+
+    expect(await response.json()).toMatchObject({ id: "fallback-response" });
+    expect(paths).toEqual(["/backend-api/codex/models", "/backend-api/codex/responses", "/v1/responses"]);
   });
 
   it("preserves the last upstream error when no failover account remains", async () => {

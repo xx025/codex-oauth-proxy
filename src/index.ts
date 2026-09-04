@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { AccountPoolCore, AccountProvider, PoolError, PoolSettings, PoolState, RequestRecordInput, parseImportPayload } from "./pool";
+import { AccountPoolCore, AccountProvider, PoolError, PoolSettings, PoolState, RequestRecordInput, SelectedCustomApi, parseImportPayload } from "./pool";
 import {
   BrowserLoginSession,
   DeviceLoginSession,
@@ -13,7 +13,7 @@ import {
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { createUpstreamFetch } from "./egress";
 import { RequestMetadata, emptyTokenUsage, readTokenUsage } from "./metrics";
-import { antigravityMissingThoughtSignatureIds, antigravityModelCatalog, ensureAntigravitySessionId, finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, restoreAntigravityThoughtSignatures, SelectedUpstreamAccount } from "./api";
+import { antigravityMissingThoughtSignatureIds, antigravityModelCatalog, ensureAntigravitySessionId, finalizeUpstreamResponse, mergeCustomModelCatalog, prepareCustomUpstreamRequest, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, requestedModel, restoreAntigravityThoughtSignatures, SelectedUpstreamAccount } from "./api";
 import type { GeminiThoughtSignature } from "./gemini-api";
 import { handleMcp } from "./mcp";
 import {
@@ -39,6 +39,7 @@ const MAX_RETRY_RESPONSE_BYTES = 64 * 1024;
 const PROXY_EXECUTOR_SHARDS = 32;
 const THOUGHT_SIGNATURE_TTL_MS = 60 * 60 * 1000;
 const THOUGHT_SIGNATURE_KEY_PREFIX = "thought-signature:";
+const INTERNAL_ROUTING_HEADER = "x-ecrelay-internal-routing";
 const encoder = new TextEncoder();
 
 type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
@@ -66,7 +67,8 @@ export class AccountPool extends DurableObject<Env> {
     this.core = new AccountPoolCore({
       get: () => this.ctx.storage.get<PoolState>("pool"),
       put: (value) => this.ctx.storage.put("pool", value),
-    }, (input, init) => this.fetchUpstream(input, init), Date.now, env.KEY_ENCRYPTION_SECRET);
+    }, (input, init) => this.fetchUpstream(input, init), Date.now, env.KEY_ENCRYPTION_SECRET,
+    (baseUrl) => createUpstreamFetch(env, [new URL(baseUrl).hostname]));
   }
 
   private fetchUpstream(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -83,6 +85,30 @@ export class AccountPool extends DurableObject<Env> {
   private async handle(request: Request): Promise<Response> {
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/custom-apis" && request.method === "GET") {
+        return json({ customApis: await this.core.listCustomApis() });
+      }
+      if (url.pathname === "/custom-apis" && request.method === "POST") {
+        const customApi = await this.core.addCustomApi(await request.json());
+        await this.ctx.storage.delete(MODEL_CATALOG_CACHE_KEY);
+        return json({ customApi }, 201);
+      }
+      const customApiMatch = url.pathname.match(/^\/custom-apis\/([^/]+)$/);
+      if (customApiMatch && request.method === "PATCH") {
+        const customApi = await this.core.updateCustomApi(customApiMatch[1], await request.json());
+        await this.ctx.storage.delete(MODEL_CATALOG_CACHE_KEY);
+        return json({ customApi });
+      }
+      if (customApiMatch && request.method === "DELETE") {
+        await this.core.removeCustomApi(customApiMatch[1]);
+        await this.ctx.storage.delete(MODEL_CATALOG_CACHE_KEY);
+        return json({ ok: true });
+      }
+      if (url.pathname === "/custom-api-routing" && request.method === "POST") {
+        if (request.headers.get(INTERNAL_ROUTING_HEADER) !== "1") return json({ error: "Not found" }, 404);
+        const { model = "" } = await request.json() as { model?: string };
+        return json({ candidates: await this.core.selectCustomApis(model) });
+      }
       if (url.pathname === "/accounts" && request.method === "GET") {
         return json({ accounts: await this.core.list() });
       }
@@ -430,6 +456,29 @@ async function handleAdmin(request: Request, env: Env, ctx: WaitUntilContext): P
     });
     return cloneWithSecurityHeaders(await proxyExecutorStub(env, upstreamRequest).fetch(upstreamRequest));
   }
+  if (url.pathname === "/admin/api/models/test" && request.method === "POST") {
+    const payload = await request.json() as { model?: unknown };
+    const model = boundedString(payload.model, "model", 256).trim();
+    const startedAt = Date.now();
+    const testRequest = new Request(new URL("/v1/responses", request.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        input: "Reply with exactly: OK",
+        max_output_tokens: 64,
+        stream: false,
+      }),
+    });
+    const response = await proxyExecutorStub(env, testRequest).fetch(testRequest);
+    const body = await response.text();
+    return json({
+      ok: response.ok,
+      status: response.status,
+      latencyMs: Date.now() - startedAt,
+      text: modelTestSummary(body),
+    });
+  }
 
   const stub = accountPoolStub(env);
   const upstreamPath = url.pathname.replace("/admin/api", "") || "/";
@@ -438,7 +487,7 @@ async function handleAdmin(request: Request, env: Env, ctx: WaitUntilContext): P
     headers: { "content-type": "application/json" },
     body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
   }));
-  if (response.ok && request.method === "POST" && (upstreamPath === "/accounts" || upstreamPath.startsWith("/oauth/"))) {
+  if (response.ok && ((request.method === "POST" && (upstreamPath === "/accounts" || upstreamPath.startsWith("/oauth/"))) || upstreamPath.startsWith("/custom-apis"))) {
     ctx.waitUntil((async () => {
       try {
         const refreshReq = new Request("https://internal/v1/models?refresh=1");
@@ -458,11 +507,29 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
   const refreshModelCatalog = modelCatalogRequest && url.searchParams.get("refresh") === "1";
   if (modelCatalogRequest && !refreshModelCatalog) {
     const cached = await getModelCatalogCache(env);
-    if (cached) return cloneWithSecurityHeaders(cached);
+    if (cached) return cloneWithSecurityHeaders(await withCustomModels(env, cached));
   }
 
   const settings = await loadPoolSettings(env);
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await readRequestBody(request);
+  const rawModel = requestBody ? requestedModel(requestBody) : "";
+  const customCandidates = rawModel ? await selectCustomApis(env, rawModel) : [];
+  let cachedCatalog = rawModel ? await getModelCatalogCache(env) : undefined;
+  if (customCandidates.length && !cachedCatalog) {
+    await proxyWithFailover(new Request(new URL("/v1/models?refresh=1", request.url)), env, ctx);
+    cachedCatalog = await getModelCatalogCache(env);
+  }
+  const customOnly = customCandidates.length > 0
+    && (!cachedCatalog || !await catalogContainsModel(cachedCatalog, rawModel));
+  const upstreamFetch = createUpstreamFetch(env);
+  const customMetadata: RequestMetadata = {
+    model: rawModel,
+    endpoint: url.pathname.slice(0, 80),
+    streaming: requestBody ? requestBodyStreaming(requestBody) : false,
+  };
+  if (customOnly && requestBody) {
+    return proxyCustomApis(url.pathname, requestBody, customCandidates, env, ctx, customMetadata, startedAt);
+  }
   let prepared = prepareProxyRequest(url.pathname, requestBody, { serviceTier: settings.serviceTier });
   if (prepared.provider === "antigravity") {
     const sessionId = ensureAntigravitySessionId(request, prepared);
@@ -475,22 +542,23 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
   const metadata: RequestMetadata = { model: prepared.model, endpoint: url.pathname.slice(0, 80), streaming: prepared.streaming };
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
-  const upstreamFetch = createUpstreamFetch(env);
+  const fallbackCandidates = customCandidates.filter((candidate) => candidate.fallback);
 
   for (let attempt = 0; attempt < settings.maxAccountAttempts; attempt += 1) {
     let account: SelectedUpstreamAccount & { id: string };
     try {
       account = await selectAccount(env, excluded, prepared.provider);
     } catch (error) {
-      if (lastAttempt) return trackRequestResponse(
-        stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt,
-      );
-      if (modelCatalogRequest && error instanceof PoolError && error.status === 503) {
-        const catalogResponse = Response.json(antigravityModelCatalog());
+      if (modelCatalogRequest && !lastAttempt && error instanceof PoolError && error.status === 503) {
+        const catalogResponse = await withCustomModels(env, Response.json(antigravityModelCatalog()));
         const cachedBody = JSON.stringify(antigravityModelCatalog());
         ctx.waitUntil(putModelCatalogCache(env, catalogResponse, cachedBody));
         return trackRequestResponse(catalogResponse, env, ctx, metadata, "antigravity-catalog", startedAt);
       }
+      if (requestBody && fallbackCandidates.length) break;
+      if (lastAttempt) return trackRequestResponse(
+        stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt,
+      );
       throw error;
     }
     excluded.push(account.id);
@@ -499,7 +567,7 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
     const retryAfterSeconds = parseRetryAfter(response.headers.get("retry-after"));
     const shouldFailover = response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500;
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
-    if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
+    if (!shouldFailover) {
       ctx.waitUntil(report);
       const finalResponse = stripInternalHeaders(await finalizeUpstreamResponse(
         prepared,
@@ -511,11 +579,15 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
       if (modelCatalogRequest && finalResponse.status >= 200 && finalResponse.status < 300) {
         const cachedBody = await finalResponse.clone().text();
         ctx.waitUntil(putModelCatalogCache(env, finalResponse, cachedBody));
+        return trackRequestResponse(await withCustomModels(env, finalResponse), env, ctx, metadata, account.id, startedAt);
       }
       return trackRequestResponse(finalResponse, env, ctx, metadata, account.id, startedAt);
     }
     await report;
     lastAttempt = { response: await snapshotRetryResponse(response), accountId: account.id };
+  }
+  if (requestBody && fallbackCandidates.length) {
+    return proxyCustomApis(url.pathname, requestBody, fallbackCandidates, env, ctx, customMetadata, startedAt, lastAttempt);
   }
   return lastAttempt
     ? trackRequestResponse(stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt)
@@ -583,6 +655,84 @@ async function putModelCatalogCache(env: Env, response: Response, body: string):
     }),
   });
   if (!stored.ok) throw new Error(`Model catalog cache storage failed (${stored.status})`);
+}
+
+async function listCustomApis(env: Env) {
+  const response = await accountPoolStub(env).fetch("https://account-pool/custom-apis");
+  const result = await response.json() as { customApis?: Awaited<ReturnType<AccountPoolCore["listCustomApis"]>>; error?: string };
+  if (!response.ok || !result.customApis)
+    throw new PoolError(response.status, result.error || "Custom APIs could not be loaded");
+  return result.customApis;
+}
+
+async function selectCustomApis(env: Env, model: string): Promise<SelectedCustomApi[]> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/custom-api-routing", {
+    method: "POST",
+    headers: { "content-type": "application/json", [INTERNAL_ROUTING_HEADER]: "1" },
+    body: JSON.stringify({ model }),
+  });
+  const result = await response.json() as { candidates?: SelectedCustomApi[]; error?: string };
+  if (!response.ok || !result.candidates)
+    throw new PoolError(response.status, result.error || "Custom API routing could not be loaded");
+  return result.candidates;
+}
+
+async function withCustomModels(env: Env, response: Response): Promise<Response> {
+  if (!response.ok) return response;
+  const merged = mergeCustomModelCatalog(await response.clone().json(), await listCustomApis(env));
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json; charset=utf-8");
+  return new Response(JSON.stringify(merged), { status: response.status, statusText: response.statusText, headers });
+}
+
+async function catalogContainsModel(response: Response, model: string): Promise<boolean> {
+  try {
+    const root = await response.clone().json() as { data?: Array<{ id?: unknown }> };
+    return Array.isArray(root.data) && root.data.some((item) => item?.id === model);
+  } catch {
+    return false;
+  }
+}
+
+function requestBodyStreaming(body: ArrayBuffer): boolean {
+  try {
+    return (JSON.parse(new TextDecoder().decode(body)) as { stream?: unknown }).stream === true;
+  } catch {
+    return false;
+  }
+}
+
+async function proxyCustomApis(
+  pathname: string,
+  requestBody: ArrayBuffer,
+  candidates: SelectedCustomApi[],
+  env: Env,
+  ctx: WaitUntilContext,
+  metadata: RequestMetadata,
+  startedAt: number,
+  previousAttempt?: { response: Response; accountId: string },
+): Promise<Response> {
+  let lastAttempt = previousAttempt;
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    const upstream = prepareCustomUpstreamRequest(pathname, requestBody, candidate);
+    try {
+      const upstreamFetch = createUpstreamFetch(env, [new URL(candidate.baseUrl).hostname]);
+      const response = await upstreamFetch(upstream.url, upstream.init);
+      const retryable = response.status === 401 || response.status === 403 || response.status === 408 || response.status === 429 || response.status >= 500;
+      if (!retryable) {
+        return trackRequestResponse(response, env, ctx, metadata, `custom:${candidate.id}`, startedAt);
+      }
+      lastAttempt = { response: await snapshotRetryResponse(response), accountId: `custom:${candidate.id}` };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastAttempt)
+    return trackRequestResponse(stripInternalHeaders(lastAttempt.response), env, ctx, metadata, lastAttempt.accountId, startedAt);
+  if (lastError) throw lastError;
+  return json({ error: "No custom API is available for this model" }, 503);
 }
 
 async function getThoughtSignatures(
@@ -849,6 +999,33 @@ function boundedString(value: unknown, field: string, maxLength: number): string
   if (typeof value !== "string" || !value.trim() || value.length > maxLength)
     throw new PoolError(400, `${field} must be a non-empty string of at most ${maxLength} characters`);
   return value;
+}
+
+function modelTestSummary(body: string): string {
+  try {
+    const root = JSON.parse(body) as Record<string, unknown>;
+    if (typeof root.output_text === "string") return root.output_text.slice(0, 500);
+    const choices = Array.isArray(root.choices) ? root.choices : [];
+    const message = choices[0] && typeof choices[0] === "object"
+      ? (choices[0] as { message?: { content?: unknown } }).message
+      : undefined;
+    if (typeof message?.content === "string") return message.content.slice(0, 500);
+    const output = Array.isArray(root.output) ? root.output : [];
+    const text = output.flatMap((item) => {
+      if (!item || typeof item !== "object" || !Array.isArray((item as { content?: unknown }).content)) return [];
+      return ((item as { content: unknown[] }).content).flatMap((content) => {
+        if (!content || typeof content !== "object") return [];
+        const value = (content as { text?: unknown }).text;
+        return typeof value === "string" ? [value] : [];
+      });
+    }).join("\n");
+    if (text) return text.slice(0, 500);
+    const error = root.error && typeof root.error === "object"
+      ? (root.error as { message?: unknown }).message
+      : root.error;
+    if (typeof error === "string") return error.slice(0, 500);
+  } catch {}
+  return body.slice(0, 500);
 }
 
 async function thoughtSignatureStorageKey(

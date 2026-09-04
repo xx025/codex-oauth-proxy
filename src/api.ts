@@ -1,5 +1,5 @@
 import { PoolError } from "./pool";
-import type { AccountProvider } from "./pool";
+import type { AccountProvider, CustomApiMetadata, SelectedCustomApi } from "./pool";
 import {
   ANTIGRAVITY_GENERATE_CONTENT_URL,
   antigravityHeaders,
@@ -61,6 +61,64 @@ export interface ProxyRequestOptions {
 export interface SelectedUpstreamRequest {
   url: string;
   init: RequestInit;
+}
+
+export function requestedModel(bodyBytes?: ArrayBuffer): string {
+  return stringValue(parseBody(bodyBytes).model).trim();
+}
+
+export function prepareCustomUpstreamRequest(
+  pathname: string,
+  bodyBytes: ArrayBuffer,
+  selected: SelectedCustomApi,
+): SelectedUpstreamRequest {
+  if (pathname !== "/v1/responses" && pathname !== "/v1/chat/completions")
+    throw new PoolError(404, "Not found");
+  const body = parseBody(bodyBytes);
+  const suffix = pathname.slice("/v1".length);
+  return {
+    url: `${selected.baseUrl}${suffix}`,
+    init: {
+      method: "POST",
+      headers: {
+        accept: body.stream === true ? "text/event-stream" : "application/json",
+        authorization: `Bearer ${selected.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: bodyBytes,
+      redirect: "manual",
+    },
+  };
+}
+
+export function mergeCustomModelCatalog(
+  input: unknown,
+  customApis: readonly CustomApiMetadata[],
+): JsonObject {
+  const root = objectValue(input);
+  const data = Array.isArray(root?.data) ? [...root.data] : [];
+  const seen = new Set(data.map((value) => stringValue(objectValue(value)?.id)).filter(Boolean));
+  for (const customApi of customApis) {
+    if (!customApi.enabled) continue;
+    for (const model of customApi.models) {
+      if (seen.has(model.id)) continue;
+      seen.add(model.id);
+      data.push({
+        id: model.id,
+        object: "model",
+        created: Math.floor(customApi.createdAt / 1000),
+        owned_by: model.ownedBy || "custom",
+        name: model.name || model.id,
+        base_model: model.id,
+        family: "custom",
+        vendor: customApi.name,
+        category: "custom",
+        supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+        capabilities: { tools: true, vision: true, streaming: true },
+      });
+    }
+  }
+  return { object: "list", data };
 }
 
 export async function readRequestBody(request: Request): Promise<ArrayBuffer> {

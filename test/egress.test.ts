@@ -9,6 +9,7 @@ describe("native Cloudflare egress", () => {
           "https://auth.openai.com/oauth/token",
           "https://cloudresourcemanager.googleapis.com/v1/projects?pageSize=100",
           "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+          "https://developer.amd.com.cn/radeon/api/v1/models",
         ]).toContain(request.url);
         expect(request.headers.has("x-codex-internal-key")).toBe(false);
         expect(request.headers.has("x-codex-egress-url")).toBe(false);
@@ -28,6 +29,13 @@ describe("native Cloudflare egress", () => {
       { method: "POST" },
     );
     expect(binding.fetch).toHaveBeenCalledTimes(3);
+    const customUpstreamFetch = createUpstreamFetch(
+      { NATIVE_EGRESS: binding },
+      ["developer.amd.com.cn"],
+    );
+    await customUpstreamFetch("https://developer.amd.com.cn/radeon/api/v1/models");
+    expect(binding.fetch).toHaveBeenCalledTimes(4);
+    await expect(upstreamFetch("https://developer.amd.com.cn/radeon/api/v1/models")).rejects.toMatchObject({ status: 502 });
     await expect(upstreamFetch("https://example.com/private")).rejects.toMatchObject({ status: 502 });
   });
 

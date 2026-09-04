@@ -54,6 +54,68 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("AccountPoolCore", () => {
+  it("discovers, encrypts, lists, and selects custom OpenAI APIs", async () => {
+    const storage = new MemoryStorage();
+    const upstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
+      object: "list",
+      data: [
+        { id: "custom-model", owned_by: "vendor" },
+        { id: "custom-model" },
+        { id: "other-model", name: "Other" },
+      ],
+    }));
+    const pool = new AccountPoolCore(storage, upstream as typeof fetch, () => 1_000, "secret");
+    const added = await pool.addCustomApi({
+      name: "Custom",
+      baseUrl: "https://chatgpt.com/proxy/",
+      apiKey: "upstream-secret",
+      priority: 5,
+      fallback: true,
+    });
+    expect(added).toMatchObject({
+      name: "Custom",
+      baseUrl: "https://chatgpt.com/proxy/v1",
+      priority: 5,
+      fallback: true,
+      models: [{ id: "custom-model", ownedBy: "vendor" }, { id: "other-model", name: "Other" }],
+      hasApiKey: true,
+    });
+    expect(added).not.toHaveProperty("encryptedApiKey");
+    expect(JSON.stringify(storage.value)).not.toContain("upstream-secret");
+    const discovery = upstream.mock.calls[0];
+    expect(discovery[0]).toBe("https://chatgpt.com/proxy/v1/models");
+    expect(discovery[1]).toMatchObject({ method: "GET", redirect: "manual" });
+    expect(new Headers(discovery[1]?.headers).get("authorization")).toBe("Bearer upstream-secret");
+
+    expect(await pool.selectCustomApis("custom-model")).toEqual([expect.objectContaining({
+      id: added.id,
+      apiKey: "upstream-secret",
+      baseUrl: "https://chatgpt.com/proxy/v1",
+    })]);
+    expect(await pool.selectCustomApis("missing")).toEqual([]);
+    await pool.updateCustomApi(added.id, { enabled: false });
+    expect(await pool.selectCustomApis("custom-model")).toEqual([]);
+    await pool.removeCustomApi(added.id);
+    expect(await pool.listCustomApis()).toEqual([]);
+  });
+
+  it("rejects invalid custom API model catalogs", async () => {
+    const pool = new AccountPoolCore(
+      new MemoryStorage(),
+      vi.fn(async () => Response.json({ data: [] })) as typeof fetch,
+    );
+    await expect(pool.addCustomApi({
+      name: "Custom",
+      baseUrl: "http://localhost:8080",
+      apiKey: "secret",
+    })).rejects.toThrow("HTTPS URL on port 443");
+    await expect(pool.addCustomApi({
+      name: "Custom",
+      baseUrl: "https://chatgpt.com/v1",
+      apiKey: "secret",
+    })).rejects.toThrow("invalid model catalog");
+  });
+
   it("refreshes Antigravity quota from daily fetchAvailableModels", async () => {
     const storage = new MemoryStorage();
     storage.value = {

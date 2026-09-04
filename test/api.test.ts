@@ -4,7 +4,9 @@ import {
   bufferResponses,
   antigravityMissingThoughtSignatureIds,
   finalizeUpstreamResponse,
+  mergeCustomModelCatalog,
   modelsFromUpstream,
+  prepareCustomUpstreamRequest,
   prepareProxyRequest,
   prepareSelectedUpstreamRequest,
   restoreAntigravityThoughtSignatures,
@@ -50,6 +52,42 @@ function geminiEvents(): string {
 }
 
 describe("Cloudflare-native API proxy", () => {
+  it("prepares custom OpenAI requests without forwarding client credentials", () => {
+    const payload = body({ model: "custom-model", messages: [{ role: "user", content: "Hello" }], stream: true });
+    const result = prepareCustomUpstreamRequest("/v1/chat/completions", payload, {
+      id: "custom-1",
+      name: "Custom",
+      baseUrl: "https://chatgpt.com/proxy/v1",
+      apiKey: "upstream-key",
+      priority: 1,
+      fallback: true,
+    });
+    expect(result.url).toBe("https://chatgpt.com/proxy/v1/chat/completions");
+    expect(result.init.body).toBe(payload);
+    expect(result.init.redirect).toBe("manual");
+    const headers = new Headers(result.init.headers);
+    expect(headers.get("authorization")).toBe("Bearer upstream-key");
+    expect(headers.get("accept")).toBe("text/event-stream");
+    expect([...headers.keys()].sort()).toEqual(["accept", "authorization", "content-type"]);
+  });
+
+  it("merges enabled custom models without overriding built-in entries", () => {
+    const result = mergeCustomModelCatalog({ object: "list", data: [{ id: "shared", object: "model" }] }, [{
+      id: "custom-1",
+      name: "Custom",
+      baseUrl: "https://chatgpt.com/v1",
+      enabled: true,
+      fallback: true,
+      priority: 1,
+      models: [{ id: "shared" }, { id: "custom-only", ownedBy: "vendor" }],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      validatedAt: 1_000,
+      hasApiKey: true,
+    }]);
+    expect((result.data as Array<{ id: string }>).map((model) => model.id)).toEqual(["shared", "custom-only"]);
+  });
+
   it("prepares Responses input as a Gemini Code Assist GenerateContent request", () => {
     const prepared = prepareProxyRequest(
       "/v1/responses",

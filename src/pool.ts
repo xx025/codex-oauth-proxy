@@ -94,6 +94,7 @@ export interface PoolState {
   modelRequestStats?: Record<string, ModelRequestStats>;
   proxyKeyHash?: string;
   proxyKeys?: ProxyKeyRecord[];
+  customApis?: CustomApiRecord[];
 }
 
 export type SelectionStrategy = "round_robin" | "least_failures" | "quota_weighted";
@@ -183,6 +184,39 @@ export type ProxyKeyMetadata = Omit<
   "keyHash" | "encryptedKey"
 > & { recoverable: boolean };
 
+export interface CustomApiModel {
+  id: string;
+  name?: string;
+  ownedBy?: string;
+}
+
+export interface CustomApiRecord {
+  id: string;
+  name: string;
+  baseUrl: string;
+  encryptedApiKey: string;
+  enabled: boolean;
+  fallback: boolean;
+  priority: number;
+  models: CustomApiModel[];
+  createdAt: number;
+  updatedAt: number;
+  validatedAt: number;
+}
+
+export type CustomApiMetadata = Omit<CustomApiRecord, "encryptedApiKey"> & {
+  hasApiKey: true;
+};
+
+export interface SelectedCustomApi {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  priority: number;
+  fallback: boolean;
+}
+
 export interface PoolStorage {
   get(): Promise<PoolState | undefined>;
   put(state: PoolState): Promise<void>;
@@ -232,11 +266,77 @@ export class AccountPoolCore {
     private readonly oauthFetch: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
     private readonly encryptionSecret: string = "local-test-encryption-secret",
+    private readonly customApiFetch: (baseUrl: string) => typeof fetch = () => oauthFetch,
   ) {}
 
   async list(): Promise<AccountMetadata[]> {
     const state = await this.load();
     return state.accounts.map(redactAccount);
+  }
+
+  async listCustomApis(): Promise<CustomApiMetadata[]> {
+    const state = await this.load();
+    return (state.customApis ?? []).map(redactCustomApi);
+  }
+
+  async addCustomApi(input: unknown): Promise<CustomApiMetadata> {
+    const payload = customApiInput(input);
+    const models = await discoverCustomApiModels(payload.baseUrl, payload.apiKey, this.customApiFetch(payload.baseUrl));
+    const state = await this.load();
+    const now = this.now();
+    const record: CustomApiRecord = {
+      id: crypto.randomUUID(),
+      name: payload.name,
+      baseUrl: payload.baseUrl,
+      encryptedApiKey: await encryptValue(payload.apiKey, this.encryptionSecret, "custom-api-key"),
+      enabled: true,
+      fallback: payload.fallback,
+      priority: payload.priority,
+      models,
+      createdAt: now,
+      updatedAt: now,
+      validatedAt: now,
+    };
+    (state.customApis ??= []).push(record);
+    await this.storage.put(state);
+    return redactCustomApi(record);
+  }
+
+  async updateCustomApi(id: string, input: unknown): Promise<CustomApiMetadata> {
+    if (!input || typeof input !== "object") throw new PoolError(400, "Invalid custom API payload");
+    const patch = input as Record<string, unknown>;
+    const state = await this.load();
+    const record = requiredCustomApi(state, id);
+    if (patch.name !== undefined) record.name = customApiName(patch.name);
+    if (patch.enabled !== undefined) record.enabled = requiredBoolean(patch.enabled, "enabled");
+    if (patch.fallback !== undefined) record.fallback = requiredBoolean(patch.fallback, "fallback");
+    if (patch.priority !== undefined) record.priority = customApiPriority(patch.priority);
+    record.updatedAt = this.now();
+    await this.storage.put(state);
+    return redactCustomApi(record);
+  }
+
+  async removeCustomApi(id: string): Promise<void> {
+    const state = await this.load();
+    const index = (state.customApis ?? []).findIndex((record) => record.id === id);
+    if (index < 0) throw new PoolError(404, "Custom API not found");
+    state.customApis!.splice(index, 1);
+    await this.storage.put(state);
+  }
+
+  async selectCustomApis(model: string): Promise<SelectedCustomApi[]> {
+    const state = await this.load();
+    const records = (state.customApis ?? [])
+      .filter((record) => record.enabled && record.models.some((item) => item.id === model))
+      .sort((left, right) => left.priority - right.priority || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+    return Promise.all(records.map(async (record) => ({
+      id: record.id,
+      name: record.name,
+      baseUrl: record.baseUrl,
+      apiKey: await decryptValue(record.encryptedApiKey, this.encryptionSecret, "custom-api-key"),
+      priority: record.priority,
+      fallback: record.fallback,
+    })));
   }
 
   async getSettings(): Promise<PoolSettings> {
@@ -1017,6 +1117,123 @@ export function parseImportPayload(input: unknown): ImportPayload {
   };
 }
 
+function customApiInput(input: unknown): {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  fallback: boolean;
+  priority: number;
+} {
+  if (!input || typeof input !== "object") throw new PoolError(400, "Invalid custom API payload");
+  const root = input as Record<string, unknown>;
+  const apiKey = stringValue(root.apiKey).trim();
+  if (!apiKey || apiKey.length > 8_192) throw new PoolError(400, "Invalid custom API key");
+  return {
+    name: customApiName(root.name),
+    baseUrl: normalizeCustomApiBaseUrl(root.baseUrl),
+    apiKey,
+    fallback: root.fallback === undefined ? true : requiredBoolean(root.fallback, "fallback"),
+    priority: root.priority === undefined ? 100 : customApiPriority(root.priority),
+  };
+}
+
+function customApiName(value: unknown): string {
+  const name = stringValue(value).trim();
+  if (!name || name.length > 80) throw new PoolError(400, "Invalid custom API name");
+  return name;
+}
+
+function customApiPriority(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1_000)
+    throw new PoolError(400, "Custom API priority must be an integer from 0 to 1000");
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new PoolError(400, `${field} must be a boolean`);
+  return value;
+}
+
+function normalizeCustomApiBaseUrl(value: unknown): string {
+  const raw = stringValue(value).trim();
+  if (!raw || raw.length > 2_048) throw new PoolError(400, "Invalid custom API base URL");
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new PoolError(400, "Invalid custom API base URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || (url.port && url.port !== "443"))
+    throw new PoolError(400, "Custom API base URL must be an HTTPS URL on port 443 without credentials, query, or fragment");
+  let path = url.pathname.replace(/\/+$/, "");
+  if (!path.toLowerCase().endsWith("/v1")) path = `${path}/v1`;
+  url.pathname = path.replace(/^\/?/, "/");
+  return url.toString().replace(/\/$/, "");
+}
+
+async function discoverCustomApiModels(
+  baseUrl: string,
+  apiKey: string,
+  upstreamFetch: typeof fetch,
+): Promise<CustomApiModel[]> {
+  const response = await upstreamFetch(`${baseUrl}/models`, {
+    method: "GET",
+    headers: { accept: "application/json", authorization: `Bearer ${apiKey}` },
+    redirect: "manual",
+  });
+  if (!response.ok) throw new PoolError(502, `Custom API model discovery returned HTTP ${response.status}`);
+  const bytes = await readLimitedBody(response, 2 * 1024 * 1024);
+  let root: Record<string, unknown> | undefined;
+  try {
+    root = objectValue(JSON.parse(new TextDecoder().decode(bytes)));
+  } catch {}
+  const data = Array.isArray(root?.data) ? root.data : [];
+  const models = new Map<string, CustomApiModel>();
+  for (const value of data) {
+    const model = objectValue(value);
+    const id = stringValue(model?.id).trim();
+    if (!id || id.length > 256 || models.has(id)) continue;
+    const name = stringValue(model?.name).trim();
+    const ownedBy = stringValue(model?.owned_by).trim();
+    models.set(id, {
+      id,
+      ...(name ? { name: name.slice(0, 256) } : {}),
+      ...(ownedBy ? { ownedBy: ownedBy.slice(0, 256) } : {}),
+    });
+    if (models.size >= 10_000) break;
+  }
+  if (!models.size) throw new PoolError(502, "Custom API returned an invalid model catalog");
+  return [...models.values()];
+}
+
+async function readLimitedBody(response: Response, limit: number): Promise<Uint8Array> {
+  if (!response.body) throw new PoolError(502, "Custom API returned an empty model catalog");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        throw new PoolError(502, "Custom API model catalog is too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
 export function tokenIdentity(
   idToken: string,
   accessToken: string,
@@ -1130,6 +1347,17 @@ function redactProxyKey(record: ProxyKeyRecord): ProxyKeyMetadata {
     ...metadata
   } = record;
   return { ...metadata, recoverable: true };
+}
+
+function requiredCustomApi(state: PoolState, id: string): CustomApiRecord {
+  const record = (state.customApis ?? []).find((candidate) => candidate.id === id);
+  if (!record) throw new PoolError(404, "Custom API not found");
+  return record;
+}
+
+function redactCustomApi(record: CustomApiRecord): CustomApiMetadata {
+  const { encryptedApiKey: _encryptedApiKey, ...metadata } = record;
+  return { ...metadata, hasApiKey: true };
 }
 
 function legacyProxyKey(): ProxyKeyMetadata {
@@ -1558,10 +1786,10 @@ async function sha256(value: string): Promise<string> {
   );
 }
 
-async function encryptionKey(secret: string): Promise<CryptoKey> {
+async function encryptionKey(secret: string, purpose = "proxy-key"): Promise<CryptoKey> {
   const material = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`codex-proxy-key:${secret}`),
+    new TextEncoder().encode(`${purpose === "proxy-key" ? "codex-proxy-key" : purpose}:${secret}`),
   );
   return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, [
     "encrypt",
@@ -1569,26 +1797,26 @@ async function encryptionKey(secret: string): Promise<CryptoKey> {
   ]);
 }
 
-async function encryptValue(value: string, secret: string): Promise<string> {
+async function encryptValue(value: string, secret: string, purpose?: string): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = new Uint8Array(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv },
-      await encryptionKey(secret),
+      await encryptionKey(secret, purpose),
       new TextEncoder().encode(value),
     ),
   );
   return `${base64Url(iv)}.${base64Url(encrypted)}`;
 }
 
-async function decryptValue(value: string, secret: string): Promise<string> {
+async function decryptValue(value: string, secret: string, purpose?: string): Promise<string> {
   const [ivText, encryptedText] = value.split(".");
   if (!ivText || !encryptedText)
     throw new PoolError(500, "Stored key is invalid");
   try {
     const decrypted = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: fromBase64Url(ivText) },
-      await encryptionKey(secret),
+      await encryptionKey(secret, purpose),
       fromBase64Url(encryptedText),
     );
     return new TextDecoder().decode(decrypted);

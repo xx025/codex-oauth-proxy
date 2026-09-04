@@ -81,6 +81,16 @@ type ProxyKey = {
   revokedAt?: number;
   recoverable?: boolean;
 };
+type CustomApi = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  enabled: boolean;
+  fallback: boolean;
+  priority: number;
+  models: Array<{ id: string; name?: string; ownedBy?: string }>;
+  validatedAt: number;
+};
 type Settings = {
   selectionStrategy: string;
   serviceTier: "standard" | "fast";
@@ -99,7 +109,7 @@ type Stats = {
   retentionLimit?: number;
 };
 type Toast = { title: string; message: string; error?: boolean };
-type Dialog = "key" | "add-antigravity" | "add-codex" | null;
+type Dialog = "key" | "add-antigravity" | "add-codex" | "add-custom-api" | null;
 type AppInfo = { version?: string; author?: string; repository?: string };
 
 const validViews = new Set([
@@ -164,7 +174,8 @@ function App({
   );
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]),
-    [keys, setKeys] = useState<ProxyKey[]>([]);
+    [keys, setKeys] = useState<ProxyKey[]>([]),
+    [customApis, setCustomApis] = useState<CustomApi[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null),
     [models, setModels] = useState<Model[] | null>(null),
     [stats, setStats] = useState<Stats | null>(null);
@@ -174,14 +185,16 @@ function App({
   const notify = (title: string, text: string, error = false) =>
     setToast({ title, message: text, error });
   const loadCore = async () => {
-    const [a, k, s, r] = await Promise.all([
+    const [a, k, c, s, r] = await Promise.all([
       api<{ accounts: Account[] }>("/admin/api/accounts"),
       api<{ keys: ProxyKey[] }>("/admin/api/proxy-keys"),
+      api<{ customApis: CustomApi[] }>("/admin/api/custom-apis"),
       api<{ settings: Settings }>("/admin/api/settings"),
       api<Stats>("/admin/api/request-stats"),
     ]);
     setAccounts(a.accounts || []);
     setKeys(k.keys || []);
+    setCustomApis(c.customApis || []);
     setSettings(s.settings);
     setStats(r);
   };
@@ -293,6 +306,9 @@ function App({
           <Accounts
             accounts={accounts}
             setAccounts={setAccounts}
+            customApis={customApis}
+            setCustomApis={setCustomApis}
+            invalidateModels={() => setModels(null)}
             open={setDialog}
             refresh={refreshUsage}
             notify={notify}
@@ -335,6 +351,11 @@ function App({
         reloadKeys={async () => {
           const data = await api<{ keys: ProxyKey[] }>("/admin/api/proxy-keys");
           setKeys(data.keys || []);
+        }}
+        reloadCustomApis={async () => {
+          const data = await api<{ customApis: CustomApi[] }>("/admin/api/custom-apis");
+          setCustomApis(data.customApis || []);
+          setModels(null);
         }}
         notify={notify}
       />
@@ -473,10 +494,10 @@ function Home({ accounts, keys, models, stats, settings }: any) {
   );
 }
 
-function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
+function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidateModels, open, refresh, notify }: any) {
   const { locale, t } = useI18n();
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [tab, setTab] = useState<"all" | "antigravity" | "codex">("all");
+  const [tab, setTab] = useState<"all" | "antigravity" | "codex" | "custom">("all");
 
   const agAccounts = accounts.filter((a: Account) => a.provider === "antigravity");
   const codexAccounts = accounts.filter((a: Account) => a.provider !== "antigravity");
@@ -534,6 +555,29 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
         method: "DELETE",
       });
       setAccounts(accounts.filter((a: Account) => a.id !== account.id));
+    } catch (error) {
+      notify(t("deleteFailed"), message(error, t("requestFailed")), true);
+    }
+  };
+  const updateCustomApi = async (customApi: CustomApi, patch: Partial<CustomApi>) => {
+    try {
+      const data = await api<{ customApi: CustomApi }>(
+        `/admin/api/custom-apis/${encodeURIComponent(customApi.id)}`,
+        { method: "PATCH", body: JSON.stringify(patch) },
+      );
+      setCustomApis(customApis.map((item: CustomApi) => item.id === customApi.id ? data.customApi : item));
+      invalidateModels();
+    } catch (error) {
+      notify(t("operationFailed"), message(error, t("requestFailed")), true);
+    }
+  };
+  const removeCustomApi = async (customApi: CustomApi) => {
+    if (!confirm(t("customApiDeleteConfirm", { name: customApi.name }))) return;
+    try {
+      await api(`/admin/api/custom-apis/${encodeURIComponent(customApi.id)}`, { method: "DELETE" });
+      setCustomApis(customApis.filter((item: CustomApi) => item.id !== customApi.id));
+      invalidateModels();
+      notify(t("customApiDeleted"), customApi.name);
     } catch (error) {
       notify(t("deleteFailed"), message(error, t("requestFailed")), true);
     }
@@ -691,17 +735,20 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
             <Button tone="primary" onClick={() => open("add-codex")}>
               {t("addCodexAccount")}
             </Button>
+            <Button tone="primary" onClick={() => open("add-custom-api")}>
+              {t("addCustomApi")}
+            </Button>
           </>
         }
       />
-      {accounts.length ? (
-        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+      {accounts.length || customApis.length ? (
+        <div class="account-filters">
           <button
             type="button"
             class={`button ${tab === "all" ? "primary" : ""}`}
             onClick={() => setTab("all")}
           >
-            {t("tabAll")} ({accounts.length})
+            {t("tabAll")} ({accounts.length + customApis.length})
           </button>
           <button
             type="button"
@@ -717,10 +764,17 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
           >
             {t("tabCodex")} ({codexAccounts.length})
           </button>
+          <button
+            type="button"
+            class={`button ${tab === "custom" ? "primary" : ""}`}
+            onClick={() => setTab("custom")}
+          >
+            {t("tabCustomApi")} ({customApis.length})
+          </button>
         </div>
       ) : null}
 
-      {!accounts.length ? (
+      {tab !== "custom" && (!accounts.length ? (
         <Panel title={t("accountsAndQuota")} subtitle={t("serverOnlyTokens")}>
           <div class="list">
             <Empty
@@ -792,7 +846,61 @@ function Accounts({ accounts, setAccounts, open, refresh, notify }: any) {
             </Panel>
           )}
         </>
-      )}
+      ))}
+      {(tab === "all" || tab === "custom") && <Panel
+        title={t("customApis")}
+        subtitle={t("customApisHelp")}
+      >
+        <div class="list">
+          {customApis.length ? customApis.map((customApi: CustomApi) => (
+            <article key={customApi.id} class={`custom-api-card${customApi.enabled ? "" : " is-disabled"}`}>
+              <div class="custom-api-card-main">
+                <span class="custom-api-mark" aria-hidden="true">{customApi.name.slice(0, 1).toUpperCase()}</span>
+                <div class="custom-api-identity">
+                  <div class="custom-api-title-line">
+                    <h3>{customApi.name}</h3>
+                    <span class={`status ${customApi.enabled ? "healthy" : "disabled"}`}>
+                      {customApi.enabled ? t("active") : t("disabled")}
+                    </span>
+                  </div>
+                  <code>{customApi.baseUrl}</code>
+                  <div class="custom-api-meta">
+                    <span>{t("customApiModels", { count: customApi.models.length })}</span>
+                    <span>{t("customApiPriority")} {customApi.priority}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="custom-api-controls">
+                <label class="toggle-control">
+                  <input
+                    type="checkbox"
+                    checked={customApi.fallback}
+                    onChange={(event) => updateCustomApi(customApi, { fallback: event.currentTarget.checked })}
+                  />
+                  <span class="toggle-track" aria-hidden="true"><i /></span>
+                  <span>{t("customApiFallback")}</span>
+                </label>
+                <label class="compact-field">
+                  <span>{t("customApiPriority")}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="1000"
+                    value={customApi.priority}
+                    onChange={(event) => updateCustomApi(customApi, { priority: Number(event.currentTarget.value) })}
+                  />
+                </label>
+                <div class="custom-api-buttons">
+                  <Button onClick={() => updateCustomApi(customApi, { enabled: !customApi.enabled })}>
+                    {customApi.enabled ? t("disable") : t("enable")}
+                  </Button>
+                  <Button tone="danger" onClick={() => removeCustomApi(customApi)}>{t("delete")}</Button>
+                </div>
+              </div>
+            </article>
+          )) : <Empty title={t("noCustomApis")} text={t("customApiEgressHelp")} />}
+        </div>
+      </Panel>}
     </>
   );
 }
@@ -1245,13 +1353,64 @@ function Models({
 }) {
   const { locale, t } = useI18n();
   const groups = groupModels(models || []);
+  const [testingAll, setTestingAll] = useState(false);
+  const [testRunTotal, setTestRunTotal] = useState(0);
+  const [tests, setTests] = useState<Record<string, {
+    running?: boolean;
+    ok?: boolean;
+    status?: number;
+    latencyMs?: number;
+    text?: string;
+  }>>({});
+  const testModel = async (model: Model) => {
+    setTests((current) => ({ ...current, [model.id]: { running: true } }));
+    try {
+      const result = await api<{ ok: boolean; status: number; latencyMs: number; text: string }>(
+        "/admin/api/models/test",
+        { method: "POST", body: JSON.stringify({ model: model.id }) },
+      );
+      setTests((current) => ({ ...current, [model.id]: result }));
+    } catch (error) {
+      setTests((current) => ({
+        ...current,
+        [model.id]: { ok: false, status: 0, latencyMs: 0, text: message(error, t("requestFailed")) },
+      }));
+    }
+  };
+  const testAllModels = async () => {
+    const queue = models || [];
+    if (!queue.length || testingAll) return;
+    setTestingAll(true);
+    setTestRunTotal(queue.length);
+    setTests(Object.fromEntries(queue.map((model) => [model.id, { running: true }])));
+    let next = 0;
+    const worker = async () => {
+      while (next < queue.length) {
+        const model = queue[next++];
+        await testModel(model);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
+    setTestingAll(false);
+  };
+  const completedTests = Object.values(tests).filter((result) => !result.running).length;
+  const passedTests = Object.values(tests).filter((result) => result.ok).length;
   return (
     <>
       <PageHeader
         eyebrow={t("modelsEyebrow")}
         title={t("modelsTitle")}
         description={t("modelsDescriptionLong")}
-        actions={<Button onClick={refresh}>{t("refreshCatalog")}</Button>}
+        actions={
+          <>
+            <Button onClick={refresh}>{t("refreshCatalog")}</Button>
+            <Button tone="primary" disabled={!models?.length || testingAll} onClick={testAllModels}>
+              {testingAll
+                ? t("testingAllModels", { completed: completedTests, total: testRunTotal })
+                : t("testAllModels")}
+            </Button>
+          </>
+        }
       />
       <Panel
         title={t("modelCatalog")}
@@ -1269,6 +1428,12 @@ function Models({
               })
         }
       >
+        {testRunTotal > 0 && !testingAll && (
+          <div class={`model-test-summary${passedTests === testRunTotal ? " all-passed" : " has-failures"}`}>
+            <strong>{t("modelTestSummary", { passed: passedTests, total: testRunTotal })}</strong>
+            <span>{t("modelTestSummaryHelp")}</span>
+          </div>
+        )}
         {models?.length ? (
           <div class="model-families">
             {groups.map((group) => (
@@ -1281,10 +1446,15 @@ function Models({
                 <div class="model-grid">
                   {group.models.map((model) => (
                     <article class="model-card">
-                      <div>
-                        <div>
-                          <h3>{model.name || model.id}</h3>
-                        </div>
+                      <div class="model-card-header">
+                        <h3>{model.name || model.id}</h3>
+                        <Button
+                          class="model-test-button"
+                          disabled={testingAll || tests[model.id]?.running}
+                          onClick={() => testModel(model)}
+                        >
+                          {tests[model.id]?.running ? t("testingModel") : t("testModel")}
+                        </Button>
                       </div>
                       <div class="badges">
                         <span>
@@ -1366,6 +1536,18 @@ function Models({
                           </button>
                         ))}
                       </div>
+                      {tests[model.id] && !tests[model.id].running && (
+                        <div class={`model-test-result ${tests[model.id].ok ? "passed" : "failed"}`}>
+                          <div>
+                            <strong>{t(tests[model.id].ok ? "modelTestPassed" : "modelTestFailed")}</strong>
+                            <span>{t("modelTestHttp", {
+                              status: tests[model.id].status || "-",
+                              latency: formatNumber(locale, tests[model.id].latencyMs),
+                            })}</span>
+                          </div>
+                          <code>{tests[model.id].text || t("modelTestNoOutput")}</code>
+                        </div>
+                      )}
                     </article>
                   ))}
                 </div>
@@ -1866,7 +2048,7 @@ function SettingsPage({
   );
 }
 
-function Dialogs({ dialog, close, reloadAccounts, reloadKeys, notify }: any) {
+function Dialogs({ dialog, close, reloadAccounts, reloadKeys, reloadCustomApis, notify }: any) {
   if (!dialog) return null;
   if (dialog === "key")
     return <KeyDialog close={close} reload={reloadKeys} notify={notify} />;
@@ -1886,6 +2068,8 @@ function Dialogs({ dialog, close, reloadAccounts, reloadKeys, notify }: any) {
         notify={notify}
       />
     );
+  if (dialog === "add-custom-api")
+    return <AddCustomApiDialog close={close} reload={reloadCustomApis} notify={notify} />;
   return null;
 }
 function Modal({ title, subtitle, close, children, footer, style }: any) {
@@ -1915,6 +2099,75 @@ function Modal({ title, subtitle, close, children, footer, style }: any) {
         {footer && <footer>{footer}</footer>}
       </section>
     </div>
+  );
+}
+
+function AddCustomApiDialog({ close, reload, notify }: any) {
+  const { t } = useI18n();
+  const [name, setName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [priority, setPriority] = useState(100);
+  const [fallback, setFallback] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await api("/admin/api/custom-apis", {
+        method: "POST",
+        body: JSON.stringify({ name, baseUrl, apiKey, priority, fallback }),
+      });
+      await reload();
+      close();
+      notify(t("customApiAdded"), t("customApiAddedText"));
+    } catch (error) {
+      notify(t("operationFailed"), message(error, t("requestFailed")), true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal title={t("addCustomApi")} subtitle={t("customApisHelp")} close={close} style={{ maxWidth: "640px" }}>
+      <form class="custom-api-form" onSubmit={submit}>
+        <div class="custom-api-vpc-note">
+          <span class="custom-api-vpc-icon"><Icon name="cloud" /></span>
+          <p>{t("customApiEgressHelp")}</p>
+        </div>
+        <div class="custom-api-form-grid">
+          <label class="custom-api-field">
+            <span>{t("displayName")}</span>
+            <input required maxlength={80} placeholder="AMD Radeon API" value={name} onInput={(event) => setName(event.currentTarget.value)} />
+          </label>
+          <label class="custom-api-field custom-api-priority-field">
+            <span>{t("customApiPriority")}</span>
+            <input required type="number" min="0" max="1000" value={priority} onInput={(event) => setPriority(Number(event.currentTarget.value))} />
+          </label>
+          <label class="custom-api-field custom-api-field-wide">
+            <span>{t("customApiBaseUrl")}</span>
+            <input required type="url" placeholder="https://api.example.com/v1" value={baseUrl} onInput={(event) => setBaseUrl(event.currentTarget.value)} />
+          </label>
+          <label class="custom-api-field custom-api-field-wide">
+            <span>{t("customApiKey")}</span>
+            <input required type="password" autocomplete="off" placeholder="sk-..." value={apiKey} onInput={(event) => setApiKey(event.currentTarget.value)} />
+          </label>
+        </div>
+        <label class="custom-api-fallback-card">
+          <span>
+            <strong>{t("customApiFallback")}</strong>
+            <small>{t("customApisHelp")}</small>
+          </span>
+          <span class="toggle-control toggle-only">
+            <input type="checkbox" checked={fallback} onChange={(event) => setFallback(event.currentTarget.checked)} />
+            <span class="toggle-track" aria-hidden="true"><i /></span>
+          </span>
+        </label>
+        <div class="custom-api-form-actions">
+          <Button type="button" onClick={close}>{t("cancel")}</Button>
+          <Button type="submit" tone="primary" disabled={saving}>{saving ? t("validatingCustomApi") : t("addCustomApi")}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 function AddAntigravityDialog({ close, reload, notify }: any) {
