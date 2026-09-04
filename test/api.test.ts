@@ -132,6 +132,42 @@ describe("Cloudflare-native API proxy", () => {
     });
   });
 
+  it("cleans unsupported JSON schema keywords like $schema and exclusiveMinimum from tool parameters", () => {
+    const prepared = prepareProxyRequest("/v1/chat/completions", body({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "read" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "read",
+          description: "Read file",
+          parameters: {
+            $schema: "http://json-schema.org/draft-07/schema#",
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              offset: { type: "number", exclusiveMinimum: 0 },
+            },
+            required: ["path"],
+            additionalProperties: false,
+          },
+        },
+      }],
+    }));
+    const request = JSON.parse(new TextDecoder().decode(prepared.body));
+    const toolParams = request.tools[0].functionDeclarations[0].parameters;
+    expect(toolParams).toEqual({
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        offset: { type: "number" },
+      },
+      required: ["path"],
+    });
+    expect(toolParams).not.toHaveProperty("$schema");
+    expect(toolParams.properties.offset).not.toHaveProperty("exclusiveMinimum");
+  });
+
   it("rejects unsupported Gemini request fields instead of falling through to Codex", () => {
     expect(() => prepareProxyRequest("/v1/chat/completions", body({
       model: "gemini-2.5-pro",
@@ -159,8 +195,11 @@ describe("Cloudflare-native API proxy", () => {
     const responsesText = await new Response(
       transformGeminiResponsesStream(stream(geminiEvents().slice(0, 90), geminiEvents().slice(90)), "gemini-2.5-pro"),
     ).text();
-    expect(responsesText).toContain('"type":"response.reasoning_summary_text.delta","delta":"thinking"');
-    expect(responsesText).toContain('"type":"response.output_text.delta","delta":"world"');
+    expect(responsesText).toContain('"type":"response.reasoning_summary_text.delta"');
+    expect(responsesText).toContain('"delta":"thinking"');
+    expect(responsesText).toContain('"type":"response.output_text.delta"');
+    expect(responsesText).toContain('"item_id":"msg_resp_');
+    expect(responsesText).toContain('"delta":"world"');
     expect(responsesText).toContain('"type":"response.function_call_arguments.delta"');
     expect(responsesText).toContain('"input_tokens":5,"output_tokens":4,"total_tokens":9');
     expect(responsesText.endsWith("data: [DONE]\n\n")).toBe(true);

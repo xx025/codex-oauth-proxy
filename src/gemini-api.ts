@@ -70,12 +70,6 @@ export const ANTIGRAVITY_MODELS = [
     category: "reasoning",
     vendor: "Anthropic",
   },
-  {
-    id: "gpt-oss-120b-medium",
-    name: "GPT-OSS 120B Medium",
-    category: "reasoning",
-    vendor: "OpenAI",
-  },
 ] as const;
 
 export function antigravityModelEntries(): JsonObject[] {
@@ -368,6 +362,110 @@ function imagePart(url: string): JsonObject {
   throw new PoolError(400, "Gemini images must use a base64 data URL or HTTPS URL");
 }
 
+const UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "$schema",
+  "$id",
+  "$defs",
+  "definitions",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "multipleOf",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "pattern",
+  "contains",
+  "format",
+  "default",
+  "examples",
+  "example",
+  "patternProperties",
+  "propertyNames",
+  "if",
+  "then",
+  "else",
+  "not",
+  "additionalProperties",
+]);
+
+export function cleanGeminiToolSchema(input: unknown): JsonObject {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { type: "object", properties: {} };
+  }
+  return cleanSchemaNode(input as Record<string, unknown>);
+}
+
+function cleanSchemaNode(node: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  if ("const" in node && !("enum" in node)) {
+    node = { ...node, enum: [node.const] };
+  }
+
+  if ("type" in node) {
+    if (Array.isArray(node.type)) {
+      const nonNull = node.type.filter((t) => t !== "null");
+      result.type = nonNull.length ? String(nonNull[0]) : "string";
+      if (node.type.includes("null")) {
+        result.nullable = true;
+      }
+    } else if (typeof node.type === "string") {
+      result.type = node.type;
+    }
+  }
+
+  if (typeof node.description === "string" && node.description.trim()) {
+    result.description = node.description.trim();
+  }
+
+  if (node.nullable === true) {
+    result.nullable = true;
+  }
+
+  if (Array.isArray(node.enum)) {
+    result.enum = node.enum.map((val) => String(val));
+  }
+
+  if (node.properties && typeof node.properties === "object" && !Array.isArray(node.properties)) {
+    const props: Record<string, unknown> = {};
+    const rawProps = node.properties as Record<string, unknown>;
+    for (const [key, propVal] of Object.entries(rawProps)) {
+      if (propVal && typeof propVal === "object" && !Array.isArray(propVal)) {
+        props[key] = cleanSchemaNode(propVal as Record<string, unknown>);
+      } else {
+        props[key] = { type: "string" };
+      }
+    }
+    result.properties = props;
+  } else if (result.type === "object" || !result.type) {
+    result.type = "object";
+    result.properties = {};
+  }
+
+  if (Array.isArray(node.required)) {
+    const props = (result.properties as Record<string, unknown>) || {};
+    const validRequired = node.required
+      .filter((r): r is string => typeof r === "string" && r in props);
+    if (validRequired.length) {
+      result.required = validRequired;
+    }
+  }
+
+  if (result.type === "array") {
+    if (node.items && typeof node.items === "object" && !Array.isArray(node.items)) {
+      result.items = cleanSchemaNode(node.items as Record<string, unknown>);
+    } else {
+      result.items = { type: "string" };
+    }
+  }
+
+  return result;
+}
+
 function geminiTools(value: unknown): JsonObject[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new PoolError(400, "Tools must be an array");
@@ -375,11 +473,11 @@ function geminiTools(value: unknown): JsonObject[] {
     const tool = objectValue(toolValue);
     const fn = objectValue(tool?.function) ?? tool;
     if (tool?.type !== "function" || !fn)
-      throw new PoolError(400, "Gemini CLI only supports function tools");
+      throw new PoolError(400, "Gemini only supports function tools");
     return {
       name: requiredString(fn.name, "tool.function.name"),
       ...(stringValue(fn.description) ? { description: stringValue(fn.description) } : {}),
-      parameters: objectValue(fn.parameters) ?? { type: "object", properties: {} },
+      parameters: cleanGeminiToolSchema(fn.parameters),
     };
   });
 }
@@ -549,7 +647,12 @@ class GeminiState {
       });
     }
     for (const value of delta.thought)
-      events.push({ type: "response.reasoning_summary_text.delta", delta: value, output_index: 0 });
+      events.push({
+        type: "response.reasoning_summary_text.delta",
+        item_id: `rs_${this.id}`,
+        delta: value,
+        output_index: 0,
+      });
     if (delta.text.length && !this.messageStarted) {
       this.messageStarted = true;
       events.push({
@@ -559,7 +662,13 @@ class GeminiState {
       });
     }
     for (const value of delta.text)
-      events.push({ type: "response.output_text.delta", delta: value, output_index: this.thought ? 1 : 0, content_index: 0 });
+      events.push({
+        type: "response.output_text.delta",
+        item_id: `msg_${this.id}`,
+        delta: value,
+        output_index: this.thought ? 1 : 0,
+        content_index: 0,
+      });
     for (const call of delta.calls) {
       const index = this.calls.indexOf(call) + (this.thought ? 1 : 0) + (this.text ? 1 : 0);
       const item = this.responseCall(call);
