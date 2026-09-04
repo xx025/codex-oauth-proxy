@@ -4,9 +4,9 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
-把 ChatGPT OAuth 和 Antigravity 账号路由为运行在 Cloudflare Workers 上的 OpenAI 兼容 API。
+把 ChatGPT OAuth、Antigravity 账号和自定义 OpenAI 兼容上游统一路由为运行在 Cloudflare Workers 上的 API。
 
-可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，上游访问由 ChatGPT 和 Antigravity 账号统一管理。
+可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，并在同一个管理面板中管理内置账号与自定义上游。
 
 > 本项目使用非官方上游接口。请只使用自己有权控制的账号，并遵守相关条款。
 
@@ -19,14 +19,12 @@
 
 ## 功能
 
-- OpenAI 兼容 API
-- ChatGPT OAuth 登录和账号导入
-- Antigravity OAuth 登录、凭据导入、Token 自动刷新和 Code Assist 路由
-- 多账号轮询、刷新、冷却和故障转移
-- 支持流式和非流式响应
-- 内置管理面板、客户端 API Key 和请求统计
-- 仅使用 Cloudflare Workers + Durable Objects
-- 强制通过 Cloudflare `NATIVE_EGRESS` VPC 出口访问上游
+- OpenAI 兼容的 `/v1/models`、`/v1/chat/completions` 和 `/v1/responses`
+- ChatGPT OAuth 和 Antigravity 账号管理
+- 自定义 OpenAI 兼容 API、模型发现和 fallback
+- 多账号轮询、Token 刷新、冷却和故障转移
+- 流式响应、客户端 API Key、请求统计和模型测试
+- Cloudflare Workers、Durable Objects 和强制 VPC 出口
 
 ## 截图
 
@@ -34,27 +32,11 @@
 
 ## 部署
 
-点击上方按钮即可在浏览器创建 Worker，不需要下载代码，不需要安装 Node.js，也不需要本地运行 npm。
-
-首次重新部署前，在 Cloudflare 后台添加：
-
-- 构建变量 `CLOUDFLARE_TUNNEL_ID`：Cloudflare Tunnel/VPC 出口 ID
-- Worker Secret `KEY_ENCRYPTION_SECRET`：随机长字符串，可用 `openssl rand -hex 32` 生成
-- 可选 Worker Secret `ADMIN_API_KEY`：仅在管理域名没有使用 Cloudflare Access 时需要
-
-Durable Objects 会在 Wrangler 成功部署时自动创建，不需要手动创建。
-
-Cloudflare 的 Deploy 按钮目前不会在首次引导页显示 Tunnel ID 输入框。首次部署可以先创建不带 VPC 出口的 Worker；之后进入 **Settings > Build > Build variables and secrets** 添加 `CLOUDFLARE_TUNNEL_ID`，再重新部署后使用 API。
-
-需要 VPC 出口连接器时，可以参考 [cloudflared](https://github.com/xx025/cloudflared)：这是一个最小化的 `cloudflared` 参考实现，并标注了 Railway 快速部署入口。Cloudflare 官方 tunnel connector 文档见 [Run cloudflared as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/as-a-service/)。
-
-中文部署说明见 [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md)。
+参阅[部署文档](docs/deployment.zh-CN.md)。
 
 ## 使用
 
-部署后打开 Worker 地址，添加账号，然后创建客户端 API Key。
-
-如需添加 Antigravity（Gemini / Claude 系列模型），在管理页面点击 **复制链接登录** 并选择 `Antigravity`。如使用手动导入，请在导入弹窗中选择 `Antigravity`。ECRelay 会自动发现 Code Assist Project，并在过期前自动刷新 Google Token。
+打开管理面板后，可以添加 ChatGPT 或 Antigravity 账号、接入自定义 OpenAI 兼容 API，并创建客户端 API Key。请求优先使用内置提供方；自定义 API 可提供独有模型，也可按优先级作为 fallback。**模型** 页面支持单模型和批量可用性测试。
 
 ```bash
 curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
@@ -63,17 +45,6 @@ curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
   -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-Antigravity 系列模型直接使用标准模型 ID，不需要额外前缀：
-
-```bash
-curl https://YOUR_WORKER_DOMAIN/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_CLIENT_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"你好"}],"stream":true}'
-```
-
-Antigravity 支持使用 Code Assist 的 `v1internal` 服务，而不是公开 API。请将其视为实验性功能，并且只使用你有权控制的账号。
-
 ## 本地开发
 
 ```bash
@@ -81,13 +52,6 @@ npm ci
 npm run typecheck
 npm test
 npm run build
-```
-
-命令行部署：
-
-```bash
-npx wrangler secret put KEY_ENCRYPTION_SECRET
-CLOUDFLARE_TUNNEL_ID=YOUR_TUNNEL_ID npm run deploy
 ```
 
 ## 致谢
