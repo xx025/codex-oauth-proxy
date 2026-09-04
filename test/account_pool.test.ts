@@ -228,7 +228,7 @@ describe("AccountPool device routes", () => {
     const { state } = durableState();
     const upstream = vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(Response.json({ code: "reset", windows_reset: 1 }))
       .mockResolvedValueOnce(Response.json({
         rate_limit: {
           primary_window: {
@@ -290,6 +290,43 @@ describe("AccountPool device routes", () => {
     expect((upstream.mock.calls[2][0] as Request).url).toBe(
       "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
     );
+  });
+
+  it("returns a successful reset when the follow-up usage refresh fails", async () => {
+    const { state } = durableState();
+    const upstream = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ code: "reset", windows_reset: 1 }))
+      .mockResolvedValueOnce(Response.json({ rate_limit: {} }));
+    const object = new AccountPool(state, {
+      KEY_ENCRYPTION_SECRET: "internal",
+      NATIVE_EGRESS: { fetch: upstream },
+    } as never);
+    const created = await object.fetch(new Request("https://pool/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        expiresAt: 4_000_000_000_000,
+        accountId: "workspace",
+        principalId: "user",
+      }),
+    }));
+    const { account } = await created.json() as { account: { id: string } };
+
+    const reset = await object.fetch(new Request(`https://pool/accounts/${account.id}/reset`, {
+      method: "POST",
+      body: "{}",
+    }));
+
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toMatchObject({
+      account: {
+        lastResetStatus: "reset",
+        resetCount: 1,
+        usage: { error: "Usage refresh failed" },
+      },
+    });
   });
 
   it("persists a device login server-side, imports tokens, then removes the session", async () => {

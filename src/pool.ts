@@ -1488,15 +1488,11 @@ function safeResetError(error: unknown): string {
 }
 
 function resetOutcome(input: unknown): AccountResetStatus {
-  const outcome = stringValue(objectValue(input)?.outcome);
-  if (
-    outcome === "reset" ||
-    outcome === "nothingToReset" ||
-    outcome === "noCredit" ||
-    outcome === "alreadyRedeemed"
-  ) {
-    return outcome;
-  }
+  const code = stringValue(objectValue(input)?.code);
+  if (code === "reset") return "reset";
+  if (code === "nothing_to_reset") return "nothingToReset";
+  if (code === "no_credit") return "noCredit";
+  if (code === "already_redeemed") return "alreadyRedeemed";
   throw new Error("Reset endpoint returned an incomplete response");
 }
 

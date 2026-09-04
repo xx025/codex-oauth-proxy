@@ -550,7 +550,7 @@ describe("AccountPoolCore", () => {
     const storage = new MemoryStorage();
     const oauthFetch = vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(Response.json({ code: "reset", windows_reset: 1 }))
       .mockResolvedValueOnce(
         Response.json({
           rate_limit: {
@@ -595,9 +595,61 @@ describe("AccountPoolCore", () => {
     expect(account).not.toHaveProperty("refreshToken");
   });
 
+  it("keeps a confirmed reset successful when usage refresh fails", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ code: "reset", windows_reset: 1 }))
+      .mockResolvedValueOnce(Response.json({ rate_limit: {} }));
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    const imported = await pool.importAccount(credential("a"));
+
+    const account = await pool.reset(imported.id);
+
+    expect(account).toMatchObject({
+      lastResetAt: 2_000,
+      lastResetStatus: "reset",
+      resetCount: 1,
+      failureCount: 0,
+      cooldownUntil: 0,
+      usage: { capturedAt: 2_000, error: "Usage refresh failed" },
+    });
+    expect(storage.value?.accounts[0]).toMatchObject({
+      lastResetStatus: "reset",
+      resetCount: 1,
+      usage: { capturedAt: 2_000, error: "Usage refresh failed" },
+    });
+    expect(oauthFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats an already redeemed request as a successful reset", async () => {
+    const storage = new MemoryStorage();
+    const oauthFetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ code: "already_redeemed", windows_reset: 0 }))
+      .mockResolvedValueOnce(Response.json({ rate_limit: {} }));
+    const pool = new AccountPoolCore(
+      storage,
+      oauthFetch as unknown as typeof fetch,
+      () => 2_000,
+    );
+    const imported = await pool.importAccount(credential("a"));
+
+    await expect(pool.reset(imported.id)).resolves.toMatchObject({
+      lastResetStatus: "alreadyRedeemed",
+      resetCount: 1,
+      failureCount: 0,
+      cooldownUntil: 0,
+    });
+  });
+
   it("rejects manual reset when no reset credit is available", async () => {
     const storage = new MemoryStorage();
-    const oauthFetch = vi.fn(async () => Response.json({ outcome: "noCredit" }));
+    const oauthFetch = vi.fn(async () => Response.json({ code: "no_credit", windows_reset: 0 }));
     const pool = new AccountPoolCore(
       storage,
       oauthFetch as unknown as typeof fetch,
@@ -618,7 +670,7 @@ describe("AccountPoolCore", () => {
     const storage = new MemoryStorage();
     const oauthFetch = vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ outcome: "reset" }))
+      .mockResolvedValueOnce(Response.json({ code: "reset", windows_reset: 1 }))
       .mockResolvedValueOnce(
         Response.json({
           rate_limit: {
@@ -657,7 +709,7 @@ describe("AccountPoolCore", () => {
 
   it("does not repeatedly auto-reset after an exhausted reset attempt", async () => {
     const storage = new MemoryStorage();
-    const oauthFetch = vi.fn(async () => Response.json({ outcome: "noCredit" }));
+    const oauthFetch = vi.fn(async () => Response.json({ code: "no_credit", windows_reset: 0 }));
     const pool = new AccountPoolCore(
       storage,
       oauthFetch as unknown as typeof fetch,
