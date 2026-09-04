@@ -5,9 +5,12 @@ import {
   antigravityHeaders,
   antigravityModelEntries,
   antigravityRequestBody,
+  applyGeminiThoughtSignatures,
   finalizeGeminiResponse,
+  missingGeminiThoughtSignatureIds,
   prepareGeminiRequest,
 } from "./gemini-api";
+import type { GeminiThoughtSignatureSink } from "./gemini-api";
 
 const UPSTREAM_RESPONSES_URL =
   "https://chatgpt.com/backend-api/codex/responses";
@@ -142,10 +145,9 @@ export function prepareSelectedUpstreamRequest(
 ): SelectedUpstreamRequest {
   if (prepared.provider === "antigravity") {
     const raw = prepared.body
-      ? parseJsonObject(new TextDecoder().decode(prepared.body), "Invalid prepared Gemini request")
+      ? parsePreparedGeminiBody(prepared.body)
       : {};
-    const sessionId =
-      prepared.sessionId ||= requestSessionId(request) || crypto.randomUUID();
+    const sessionId = ensureAntigravitySessionId(request, prepared);
     return {
       url: ANTIGRAVITY_GENERATE_CONTENT_URL,
       init: {
@@ -171,6 +173,30 @@ export function prepareSelectedUpstreamRequest(
       redirect: "manual",
     },
   };
+}
+
+export function ensureAntigravitySessionId(
+  request: Request,
+  prepared: PreparedProxyRequest,
+): string {
+  return prepared.sessionId ||= requestSessionId(request) || crypto.randomUUID();
+}
+
+export function antigravityMissingThoughtSignatureIds(
+  prepared: PreparedProxyRequest,
+): string[] {
+  if (prepared.provider !== "antigravity" || !prepared.body) return [];
+  return missingGeminiThoughtSignatureIds(parsePreparedGeminiBody(prepared.body));
+}
+
+export function restoreAntigravityThoughtSignatures(
+  prepared: PreparedProxyRequest,
+  signatures: Readonly<Record<string, string>>,
+): void {
+  if (prepared.provider !== "antigravity" || !prepared.body) return;
+  const body = parsePreparedGeminiBody(prepared.body);
+  applyGeminiThoughtSignatures(body, signatures);
+  prepared.body = encoder.encode(JSON.stringify(body));
 }
 
 export function upstreamHeaders(
@@ -212,6 +238,7 @@ export function upstreamHeaders(
 export async function finalizeUpstreamResponse(
   prepared: PreparedProxyRequest,
   response: Response,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): Promise<Response> {
   if (!response.ok) return response;
   if (prepared.provider === "antigravity")
@@ -220,6 +247,7 @@ export async function finalizeUpstreamResponse(
       prepared.streaming,
       prepared.model,
       response,
+      onThoughtSignatures,
     );
   if (prepared.kind === "models") {
     const payload = await readJsonResponse(response, 2 * 1024 * 1024);
@@ -241,6 +269,10 @@ export async function finalizeUpstreamResponse(
   return Response.json(
     await bufferChatCompletion(requiredBody(response), prepared.model),
   );
+}
+
+function parsePreparedGeminiBody(body: Uint8Array): JsonObject {
+  return parseJsonObject(new TextDecoder().decode(body), "Invalid prepared Gemini request");
 }
 
 export function modelsFromUpstream(

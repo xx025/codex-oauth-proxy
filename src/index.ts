@@ -13,7 +13,8 @@ import {
 import { ADMIN_ASSETS, ADMIN_HTML, FAVICON_SVG } from "./ui";
 import { createUpstreamFetch } from "./egress";
 import { RequestMetadata, emptyTokenUsage, readTokenUsage } from "./metrics";
-import { antigravityModelCatalog, finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, SelectedUpstreamAccount } from "./api";
+import { antigravityMissingThoughtSignatureIds, antigravityModelCatalog, ensureAntigravitySessionId, finalizeUpstreamResponse, prepareProxyRequest, prepareSelectedUpstreamRequest, readRequestBody, restoreAntigravityThoughtSignatures, SelectedUpstreamAccount } from "./api";
+import type { GeminiThoughtSignature } from "./gemini-api";
 import { handleMcp } from "./mcp";
 import {
   AntigravityLoginSession,
@@ -36,6 +37,8 @@ const MODEL_CATALOG_CACHE_TTL_MS = 15 * 60 * 1000;
 const MODEL_CATALOG_CACHE_KEY = "model-catalog-cache";
 const MAX_RETRY_RESPONSE_BYTES = 64 * 1024;
 const PROXY_EXECUTOR_SHARDS = 32;
+const THOUGHT_SIGNATURE_TTL_MS = 60 * 60 * 1000;
+const THOUGHT_SIGNATURE_KEY_PREFIX = "thought-signature:";
 const encoder = new TextEncoder();
 
 type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
@@ -45,6 +48,11 @@ interface ModelCatalogCache {
   body: string;
   contentType?: string;
   createdAt: number;
+  expiresAt: number;
+}
+
+interface ThoughtSignatureRecord {
+  signature: string;
   expiresAt: number;
 }
 
@@ -96,6 +104,32 @@ export class AccountPool extends DurableObject<Env> {
       }
       if (url.pathname === "/request-records" && request.method === "POST") {
         await this.core.recordRequest(await request.json());
+        return json({ ok: true }, 201);
+      }
+      if (url.pathname === "/thought-signatures/get" && request.method === "POST") {
+        const payload = thoughtSignatureLookupPayload(await request.json());
+        const now = Date.now();
+        const signatures: Record<string, string> = {};
+        for (const functionCallId of payload.functionCallIds) {
+          const key = await thoughtSignatureStorageKey(payload.sessionId, payload.model, functionCallId);
+          const record = await this.ctx.storage.get<ThoughtSignatureRecord>(key);
+          if (!record) continue;
+          if (record.expiresAt <= now) {
+            await this.ctx.storage.delete(key);
+            continue;
+          }
+          signatures[functionCallId] = record.signature;
+          await this.ctx.storage.put(key, { ...record, expiresAt: now + THOUGHT_SIGNATURE_TTL_MS });
+        }
+        return json({ signatures });
+      }
+      if (url.pathname === "/thought-signatures" && request.method === "PUT") {
+        const payload = thoughtSignatureStorePayload(await request.json());
+        const expiresAt = Date.now() + THOUGHT_SIGNATURE_TTL_MS;
+        for (const item of payload.signatures) {
+          const key = await thoughtSignatureStorageKey(payload.sessionId, payload.model, item.functionCallId);
+          await this.ctx.storage.put(key, { signature: item.signature, expiresAt } satisfies ThoughtSignatureRecord);
+        }
         return json({ ok: true }, 201);
       }
       if (url.pathname === "/model-catalog-cache" && request.method === "GET") {
@@ -430,6 +464,14 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
   const settings = await loadPoolSettings(env);
   const requestBody = request.method === "GET" || request.method === "HEAD" ? undefined : await readRequestBody(request);
   let prepared = prepareProxyRequest(url.pathname, requestBody, { serviceTier: settings.serviceTier });
+  if (prepared.provider === "antigravity") {
+    const sessionId = ensureAntigravitySessionId(request, prepared);
+    const functionCallIds = antigravityMissingThoughtSignatureIds(prepared);
+    const signatures = functionCallIds.length
+      ? await getThoughtSignatures(env, sessionId, prepared.model, functionCallIds)
+      : {};
+    restoreAntigravityThoughtSignatures(prepared, signatures);
+  }
   const metadata: RequestMetadata = { model: prepared.model, endpoint: url.pathname.slice(0, 80), streaming: prepared.streaming };
   const excluded: string[] = [];
   let lastAttempt: { response: Response; accountId: string } | undefined;
@@ -459,7 +501,13 @@ async function proxyWithFailover(request: Request, env: Env, ctx: WaitUntilConte
     const report = reportAccount(env, account.id, response.status, retryAfterSeconds);
     if (!shouldFailover || attempt === settings.maxAccountAttempts - 1) {
       ctx.waitUntil(report);
-      const finalResponse = stripInternalHeaders(await finalizeUpstreamResponse(prepared, response));
+      const finalResponse = stripInternalHeaders(await finalizeUpstreamResponse(
+        prepared,
+        response,
+        prepared.provider === "antigravity" && prepared.sessionId
+          ? (signatures) => { ctx.waitUntil(putThoughtSignatures(env, prepared.sessionId!, prepared.model, signatures)); }
+          : undefined,
+      ));
       if (modelCatalogRequest && finalResponse.status >= 200 && finalResponse.status < 300) {
         const cachedBody = await finalResponse.clone().text();
         ctx.waitUntil(putModelCatalogCache(env, finalResponse, cachedBody));
@@ -535,6 +583,37 @@ async function putModelCatalogCache(env: Env, response: Response, body: string):
     }),
   });
   if (!stored.ok) throw new Error(`Model catalog cache storage failed (${stored.status})`);
+}
+
+async function getThoughtSignatures(
+  env: Env,
+  sessionId: string,
+  model: string,
+  functionCallIds: string[],
+): Promise<Record<string, string>> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/thought-signatures/get", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, model, functionCallIds }),
+  });
+  const result = await response.json() as { signatures?: Record<string, string>; error?: string };
+  if (!response.ok || !result.signatures)
+    throw new PoolError(response.status, result.error || "Thought signatures could not be loaded");
+  return result.signatures;
+}
+
+async function putThoughtSignatures(
+  env: Env,
+  sessionId: string,
+  model: string,
+  signatures: readonly GeminiThoughtSignature[],
+): Promise<void> {
+  const response = await accountPoolStub(env).fetch("https://account-pool/thought-signatures", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, model, signatures }),
+  });
+  if (!response.ok) throw new Error(`Thought signature storage failed (${response.status})`);
 }
 
 function trackRequestResponse(
@@ -728,6 +807,62 @@ function parseRetryAfter(value: string | null): number | undefined {
   if (Number.isFinite(seconds)) return Math.max(1, Math.ceil(seconds));
   const date = Date.parse(value);
   return Number.isNaN(date) ? undefined : Math.max(1, Math.ceil((date - Date.now()) / 1000));
+}
+
+function thoughtSignatureLookupPayload(value: unknown): {
+  sessionId: string;
+  model: string;
+  functionCallIds: string[];
+} {
+  const payload = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const sessionId = boundedString(payload.sessionId, "sessionId", 512);
+  const model = boundedString(payload.model, "model", 256);
+  if (!Array.isArray(payload.functionCallIds) || payload.functionCallIds.length > 128)
+    throw new PoolError(400, "functionCallIds must be an array of at most 128 entries");
+  const functionCallIds = [...new Set(payload.functionCallIds.map(
+    (item) => boundedString(item, "functionCallId", 512),
+  ))];
+  return { sessionId, model, functionCallIds };
+}
+
+function thoughtSignatureStorePayload(value: unknown): {
+  sessionId: string;
+  model: string;
+  signatures: GeminiThoughtSignature[];
+} {
+  const payload = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const sessionId = boundedString(payload.sessionId, "sessionId", 512);
+  const model = boundedString(payload.model, "model", 256);
+  if (!Array.isArray(payload.signatures) || payload.signatures.length > 128)
+    throw new PoolError(400, "signatures must be an array of at most 128 entries");
+  const signatures = payload.signatures.map((value) => {
+    const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      functionCallId: boundedString(item.functionCallId, "functionCallId", 512),
+      signature: boundedString(item.signature, "signature", 64 * 1024),
+    };
+  });
+  return { sessionId, model, signatures };
+}
+
+function boundedString(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength)
+    throw new PoolError(400, `${field} must be a non-empty string of at most ${maxLength} characters`);
+  return value;
+}
+
+async function thoughtSignatureStorageKey(
+  sessionId: string,
+  model: string,
+  functionCallId: string,
+): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(JSON.stringify([sessionId, model, functionCallId])),
+  ));
+  return THOUGHT_SIGNATURE_KEY_PREFIX + [...digest]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function stripInternalHeaders(response: Response): Response {

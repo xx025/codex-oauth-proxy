@@ -30,6 +30,51 @@ function durableState() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AccountPool device routes", () => {
+  it("stores thought signatures with a sliding one-hour expiration", async () => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const { values, state } = durableState();
+      const object = new AccountPool(state, {
+        KEY_ENCRYPTION_SECRET: "internal",
+        NATIVE_EGRESS: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init) },
+      } as never);
+      const stored = await object.fetch(new Request("https://pool/thought-signatures", {
+        method: "PUT",
+        body: JSON.stringify({
+          sessionId: "session-1",
+          model: "gemini-2.5-flash",
+          signatures: [{ functionCallId: "call-1", signature: "real-signature" }],
+        }),
+      }));
+      expect(stored.status).toBe(201);
+
+      now += 3_500_000;
+      const first = await object.fetch(new Request("https://pool/thought-signatures/get", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "session-1", model: "gemini-2.5-flash", functionCallIds: ["call-1"] }),
+      }));
+      expect(await first.json()).toEqual({ signatures: { "call-1": "real-signature" } });
+
+      now += 3_500_000;
+      const slid = await object.fetch(new Request("https://pool/thought-signatures/get", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "session-1", model: "gemini-2.5-flash", functionCallIds: ["call-1"] }),
+      }));
+      expect(await slid.json()).toEqual({ signatures: { "call-1": "real-signature" } });
+
+      now += 3_600_001;
+      const expired = await object.fetch(new Request("https://pool/thought-signatures/get", {
+        method: "POST",
+        body: JSON.stringify({ sessionId: "session-1", model: "gemini-2.5-flash", functionCallIds: ["call-1"] }),
+      }));
+      expect(await expired.json()).toEqual({ signatures: {} });
+      expect([...values.keys()].some((key) => key.startsWith("thought-signature:"))).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("starts, completes, redacts, and deletes Antigravity login sessions", async () => {
     const upstream = vi.fn(async (input: RequestInfo | URL) => {
       const request = input as Request;

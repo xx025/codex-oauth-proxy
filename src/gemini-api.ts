@@ -94,6 +94,8 @@ export function antigravityModelEntries(): JsonObject[] {
 
 const MAX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
 const MAX_BUFFERED_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const SKIP_THOUGHT_SIGNATURE_VALIDATOR =
+  "skip_thought_signature_validator";
 const encoder = new TextEncoder();
 
 type JsonObject = Record<string, unknown>;
@@ -103,6 +105,15 @@ export interface GeminiPreparedRequest {
   model: string;
   request: JsonObject;
 }
+
+export interface GeminiThoughtSignature {
+  functionCallId: string;
+  signature: string;
+}
+
+export type GeminiThoughtSignatureSink = (
+  signatures: readonly GeminiThoughtSignature[],
+) => void | Promise<void>;
 
 export function prepareGeminiRequest(
   kind: GeminiClientKind,
@@ -128,6 +139,55 @@ export function prepareGeminiRequest(
   if (Object.keys(generationConfig).length)
     request.generationConfig = generationConfig;
   return { model, request };
+}
+
+export function missingGeminiThoughtSignatureIds(request: JsonObject): string[] {
+  const ids = new Set<string>();
+  for (const contentValue of arrayValue(request.contents)) {
+    const content = objectValue(contentValue);
+    if (content?.role !== "model") continue;
+    for (const partValue of arrayValue(content.parts)) {
+      const part = objectValue(partValue);
+      const call = objectValue(part?.functionCall);
+      const id = stringValue(call?.id).trim();
+      if (id && !thoughtSignatureValue(part, call)) ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+export function applyGeminiThoughtSignatures(
+  request: JsonObject,
+  cached: Readonly<Record<string, string>>,
+): void {
+  for (const contentValue of arrayValue(request.contents)) {
+    const content = objectValue(contentValue);
+    const parts = arrayValue(content?.parts);
+    if (content?.role !== "model") {
+      for (const partValue of parts) {
+        const part = objectValue(partValue);
+        if (objectValue(part?.functionResponse)) deleteThoughtSignatures(part);
+      }
+      continue;
+    }
+
+    let firstFunctionCallSeen = false;
+    for (const partValue of parts) {
+      const part = objectValue(partValue);
+      const call = objectValue(part?.functionCall);
+      if (!part || !call) continue;
+      const isFirst = !firstFunctionCallSeen;
+      firstFunctionCallSeen = true;
+      const id = stringValue(call.id).trim();
+      const existing = thoughtSignatureValue(part, call);
+      const signature = existing || (id ? cached[id] : "") ||
+        (isFirst ? SKIP_THOUGHT_SIGNATURE_VALIDATOR : "");
+      deleteThoughtSignatures(part);
+      if (signature && (isFirst || signature !== SKIP_THOUGHT_SIGNATURE_VALIDATOR)) {
+        part.thoughtSignature = signature;
+      }
+    }
+  }
 }
 
 export function antigravityRequestBody(
@@ -163,66 +223,79 @@ export async function finalizeGeminiResponse(
   streaming: boolean,
   model: string,
   response: Response,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): Promise<Response> {
   if (!response.ok) return response;
   const body = requiredBody(response);
   if (kind === "chat") {
     if (streaming)
-      return new Response(transformGeminiChatStream(body, model), {
+      return new Response(transformGeminiChatStream(body, model, onThoughtSignatures), {
         status: response.status,
         headers: streamingHeaders(response.headers),
       });
-    return Response.json(await bufferGeminiChat(body, model));
+    return Response.json(await bufferGeminiChat(body, model, onThoughtSignatures));
   }
   if (streaming)
-    return new Response(transformGeminiResponsesStream(body, model), {
+    return new Response(transformGeminiResponsesStream(body, model, onThoughtSignatures), {
       status: response.status,
       headers: streamingHeaders(response.headers),
     });
-  return Response.json(await bufferGeminiResponses(body, model));
+  return Response.json(await bufferGeminiResponses(body, model, onThoughtSignatures));
 }
 
 export function transformGeminiChatStream(
   body: ReadableStream<Uint8Array>,
   model: string,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): ReadableStream<Uint8Array> {
   const state = new GeminiState(model);
   return transformGeminiStream(
     body,
     (payload) => state.chatEvents(payload).map(sseData),
-    () => state.assertFinished(),
+    async () => {
+      state.assertFinished();
+      await emitThoughtSignatures(state, onThoughtSignatures);
+    },
   );
 }
 
 export function transformGeminiResponsesStream(
   body: ReadableStream<Uint8Array>,
   model: string,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): ReadableStream<Uint8Array> {
   const state = new GeminiState(model);
   return transformGeminiStream(
     body,
     (payload) => state.responseEvents(payload).map(sseData),
-    () => state.assertFinished(),
+    async () => {
+      state.assertFinished();
+      await emitThoughtSignatures(state, onThoughtSignatures);
+    },
   );
 }
 
 export async function bufferGeminiChat(
   body: ReadableStream<Uint8Array>,
   model: string,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): Promise<JsonObject> {
   const state = new GeminiState(model);
   for await (const payload of readSse(body)) state.consume(payload);
   state.assertFinished();
+  await emitThoughtSignatures(state, onThoughtSignatures);
   return state.chatCompletion();
 }
 
 export async function bufferGeminiResponses(
   body: ReadableStream<Uint8Array>,
   model: string,
+  onThoughtSignatures?: GeminiThoughtSignatureSink,
 ): Promise<JsonObject> {
   const state = new GeminiState(model);
   for await (const payload of readSse(body)) state.consume(payload);
   state.assertFinished();
+  await emitThoughtSignatures(state, onThoughtSignatures);
   return state.responsesCompletion();
 }
 
@@ -253,9 +326,13 @@ function responsesContents(body: JsonObject): {
       const name = requiredString(item.name, "function_call.name");
       const id = stringValue(item.call_id) || stringValue(item.id);
       if (id) callNames.set(id, name);
+      const signature = thoughtSignatureValue(item);
       contents.push({
         role: "model",
-        parts: [{ functionCall: { ...(id ? { id } : {}), name, args: parseArguments(item.arguments) } }],
+        parts: [{
+          functionCall: { ...(id ? { id } : {}), name, args: parseArguments(item.arguments) },
+          ...(signature ? { thoughtSignature: signature } : {}),
+        }],
       });
     } else if (type === "function_call_output") {
       const id = requiredString(item.call_id, "function_call_output.call_id");
@@ -311,7 +388,11 @@ function chatContents(body: JsonObject): {
         const id = stringValue(call?.id);
         const name = requiredString(fn?.name, "tool_calls.function.name");
         if (id) callNames.set(id, name);
-        parts.push({ functionCall: { ...(id ? { id } : {}), name, args: parseArguments(fn?.arguments) } });
+        const signature = thoughtSignatureValue(call, fn);
+        parts.push({
+          functionCall: { ...(id ? { id } : {}), name, args: parseArguments(fn?.arguments) },
+          ...(signature ? { thoughtSignature: signature } : {}),
+        });
       }
       if (parts.length) contents.push({ role: "model", parts });
       continue;
@@ -583,10 +664,12 @@ class GeminiState {
         }
         const functionCall = objectValue(part?.functionCall);
         if (functionCall) {
+          const thoughtSignature = thoughtSignatureValue(part, functionCall);
           const call = {
             id: stringValue(functionCall.id) || `call_${crypto.randomUUID()}`,
             name: requiredString(functionCall.name, "Gemini functionCall.name", 502),
             arguments: JSON.stringify(objectValue(functionCall.args) ?? {}),
+            ...(thoughtSignature ? { thoughtSignature } : {}),
           };
           this.retain(JSON.stringify(call));
           this.calls.push(call);
@@ -622,6 +705,10 @@ class GeminiState {
         id: call.id,
         type: "function",
         function: { name: call.name, arguments: call.arguments },
+        ...(call.thoughtSignature ? {
+          thought_signature: call.thoughtSignature,
+          extra_content: { google: { thought_signature: call.thoughtSignature } },
+        } : {}),
       }] }));
     }
     if (this.isFinished(payload) && !this.terminalSent) {
@@ -689,6 +776,10 @@ class GeminiState {
       id: call.id,
       type: "function",
       function: { name: call.name, arguments: call.arguments },
+      ...(call.thoughtSignature ? {
+        thought_signature: call.thoughtSignature,
+        extra_content: { google: { thought_signature: call.thoughtSignature } },
+      } : {}),
     }));
     const message: JsonObject = { role: "assistant", content: this.text || (toolCalls.length ? null : "") };
     if (this.thought) message.reasoning_content = this.thought;
@@ -712,6 +803,14 @@ class GeminiState {
       throw new PoolError(502, "Gemini stream ended without a finish reason");
   }
 
+  thoughtSignatures(): GeminiThoughtSignature[] {
+    return this.calls.flatMap((call) => {
+      const functionCallId = stringValue(call.id).trim();
+      const signature = stringValue(call.thoughtSignature).trim();
+      return functionCallId && signature ? [{ functionCallId, signature }] : [];
+    });
+  }
+
   private responseOutput(): JsonObject[] {
     const output: JsonObject[] = [];
     if (this.thought)
@@ -723,7 +822,15 @@ class GeminiState {
   }
 
   private responseCall(call: JsonObject): JsonObject {
-    return { id: `fc_${call.id}`, type: "function_call", call_id: call.id, name: call.name, arguments: call.arguments, status: "completed" };
+    return {
+      id: `fc_${call.id}`,
+      type: "function_call",
+      call_id: call.id,
+      name: call.name,
+      arguments: call.arguments,
+      status: "completed",
+      ...(call.thoughtSignature ? { thought_signature: call.thoughtSignature } : {}),
+    };
   }
 
   private responseObject(status: string, output: JsonObject[]): JsonObject {
@@ -792,7 +899,7 @@ class GeminiState {
 function transformGeminiStream(
   body: ReadableStream<Uint8Array>,
   convert: (payload: string) => string[],
-  finish: () => void,
+  finish: () => void | Promise<void>,
 ): ReadableStream<Uint8Array> {
   const parser = new SseParser();
   const decoder = new TextDecoder();
@@ -801,13 +908,22 @@ function transformGeminiStream(
       for (const payload of parser.push(decoder.decode(chunk, { stream: true })))
         for (const event of convert(payload)) controller.enqueue(encoder.encode(event));
     },
-    flush(controller) {
+    async flush(controller) {
       for (const payload of parser.push(decoder.decode(), true))
         for (const event of convert(payload)) controller.enqueue(encoder.encode(event));
-      finish();
+      await finish();
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     },
   }));
+}
+
+async function emitThoughtSignatures(
+  state: GeminiState,
+  sink?: GeminiThoughtSignatureSink,
+): Promise<void> {
+  if (!sink) return;
+  const signatures = state.thoughtSignatures();
+  if (signatures.length) await sink(signatures);
 }
 
 class SseParser {
@@ -924,6 +1040,38 @@ function objectValue(value: unknown): JsonObject | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as JsonObject
     : undefined;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function thoughtSignatureValue(...values: Array<JsonObject | undefined>): string {
+  for (const value of values) {
+    if (!value) continue;
+    const direct = stringValue(value.thoughtSignature || value.thought_signature).trim();
+    if (direct) return direct;
+    const google = objectValue(objectValue(value.extra_content)?.google);
+    const nested = stringValue(google?.thought_signature || google?.thoughtSignature).trim();
+    if (nested) return nested;
+  }
+  return "";
+}
+
+function deleteThoughtSignatures(part: JsonObject | undefined): void {
+  if (!part) return;
+  delete part.thoughtSignature;
+  delete part.thought_signature;
+  for (const value of [objectValue(part.functionCall), objectValue(part.functionResponse)]) {
+    if (!value) continue;
+    delete value.thoughtSignature;
+    delete value.thought_signature;
+  }
+  const google = objectValue(objectValue(part.extra_content)?.google);
+  if (google) {
+    delete google.thoughtSignature;
+    delete google.thought_signature;
+  }
 }
 
 function stringValue(value: unknown): string {

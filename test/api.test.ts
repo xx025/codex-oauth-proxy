@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   bufferChatCompletion,
   bufferResponses,
+  antigravityMissingThoughtSignatureIds,
   finalizeUpstreamResponse,
   modelsFromUpstream,
   prepareProxyRequest,
   prepareSelectedUpstreamRequest,
+  restoreAntigravityThoughtSignatures,
   transformChatStream,
 } from "../src/api";
 import {
@@ -43,7 +45,7 @@ function upstreamEvents(): string {
 function geminiEvents(): string {
   return [
     'data: {"response":{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"hello "}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"thoughtsTokenCount":2,"totalTokenCount":8,"cachedContentTokenCount":3}}}\n\n',
-    'data: {"response":{"candidates":[{"content":{"parts":[{"text":"world"},{"functionCall":{"id":"call_1","name":"lookup","args":{"city":"Paris"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":2,"totalTokenCount":9,"cachedContentTokenCount":3}}}\n\n',
+    'data: {"response":{"candidates":[{"content":{"parts":[{"text":"world"},{"functionCall":{"id":"call_1","name":"lookup","args":{"city":"Paris"}},"thoughtSignature":"signed-thought"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"thoughtsTokenCount":2,"totalTokenCount":9,"cachedContentTokenCount":3}}}\n\n',
   ].join("");
 }
 
@@ -132,6 +134,52 @@ describe("Cloudflare-native API proxy", () => {
     });
   });
 
+  it("restores cached Gemini thought signatures and only bypasses the first unsigned parallel call", () => {
+    const prepared = prepareProxyRequest("/v1/chat/completions", body({
+      model: "gemini-2.5-flash",
+      messages: [
+        { role: "user", content: "Run tools" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "one", arguments: "{}" },
+              extra_content: { google: { thought_signature: "client-signature" } },
+            },
+            { id: "c2", type: "function", function: { name: "two", arguments: "{}" } },
+          ],
+        },
+      ],
+    }));
+    expect(antigravityMissingThoughtSignatureIds(prepared)).toEqual(["c2"]);
+    restoreAntigravityThoughtSignatures(prepared, {
+      c1: "stale-cache",
+      c2: "cached-signature",
+    });
+    const request = JSON.parse(new TextDecoder().decode(prepared.body));
+    expect(request.contents[1].parts).toEqual([
+      { functionCall: { id: "c1", name: "one", args: {} }, thoughtSignature: "client-signature" },
+      { functionCall: { id: "c2", name: "two", args: {} }, thoughtSignature: "cached-signature" },
+    ]);
+
+    const unsigned = prepareProxyRequest("/v1/chat/completions", body({
+      model: "gemini-2.5-flash",
+      messages: [
+        { role: "assistant", content: null, tool_calls: [
+          { id: "c1", type: "function", function: { name: "one", arguments: "{}" } },
+          { id: "c2", type: "function", function: { name: "two", arguments: "{}" } },
+        ] },
+      ],
+    }));
+    restoreAntigravityThoughtSignatures(unsigned, {});
+    const unsignedRequest = JSON.parse(new TextDecoder().decode(unsigned.body));
+    expect(unsignedRequest.contents[0].parts[0].thoughtSignature).toBe("skip_thought_signature_validator");
+    expect(unsignedRequest.contents[0].parts[1]).not.toHaveProperty("thoughtSignature");
+  });
+
   it("cleans unsupported JSON schema keywords like $schema and exclusiveMinimum from tool parameters", () => {
     const prepared = prepareProxyRequest("/v1/chat/completions", body({
       model: "gemini-2.5-flash",
@@ -215,7 +263,12 @@ describe("Cloudflare-native API proxy", () => {
   });
 
   it("buffers Gemini SSE for non-streaming Responses and Chat clients", async () => {
-    const responses = await bufferGeminiResponses(stream(geminiEvents()), "gemini-2.5-pro");
+    const saved: unknown[] = [];
+    const responses = await bufferGeminiResponses(
+      stream(geminiEvents()),
+      "gemini-2.5-pro",
+      (signatures) => { saved.push(...signatures); },
+    );
     expect(responses).toMatchObject({
       object: "response",
       status: "completed",
@@ -224,9 +277,10 @@ describe("Cloudflare-native API proxy", () => {
       output: [
         { type: "reasoning", summary: [{ text: "thinking" }] },
         { type: "message", content: [{ text: "hello world" }] },
-        { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"city":"Paris"}' },
+        { type: "function_call", call_id: "call_1", name: "lookup", arguments: '{"city":"Paris"}', thought_signature: "signed-thought" },
       ],
     });
+    expect(saved).toEqual([{ functionCallId: "call_1", signature: "signed-thought" }]);
     const chat = await bufferGeminiChat(stream(geminiEvents()), "gemini-2.5-pro");
     expect(chat).toMatchObject({
       object: "chat.completion",
@@ -234,7 +288,7 @@ describe("Cloudflare-native API proxy", () => {
         message: {
           content: "hello world",
           reasoning_content: "thinking",
-          tool_calls: [{ id: "call_1", function: { name: "lookup", arguments: '{"city":"Paris"}' } }],
+          tool_calls: [{ id: "call_1", function: { name: "lookup", arguments: '{"city":"Paris"}' }, thought_signature: "signed-thought" }],
         },
         finish_reason: "tool_calls",
       }],
