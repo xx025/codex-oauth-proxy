@@ -2,8 +2,6 @@
 
 [English](README.md) | 简体中文
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
-
 > **100% Cloudflare Serverless 纯无服务器架构**：零服务器、零 Docker 容器、无需外置数据库或 Redis，完全运行在 Cloudflare Workers 和 Durable Objects 全球边缘网络上。
 
 把 ChatGPT OAuth、Antigravity 账号和自定义 OpenAI 兼容上游统一路由为运行在 Cloudflare Workers 上的 API。

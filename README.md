@@ -2,8 +2,6 @@
 
 English | [简体中文](README.zh-CN.md)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
-
 > **100% Cloudflare Serverless AI Gateway**: Zero VPS, zero Docker, zero external database. Runs entirely on Cloudflare Workers and Durable Objects.
 
 Route ChatGPT OAuth, Antigravity accounts, and custom OpenAI-compatible upstreams through a single API on Cloudflare Workers.
