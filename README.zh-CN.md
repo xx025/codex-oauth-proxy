@@ -26,6 +26,23 @@
 
 请不要在公开测试站点输入私人信息、个人 Token、生产 API Key 或重要账号。
 
+## 部署
+
+点击下方按钮即可直接在浏览器中将 Worker 部署到你的 Cloudflare 账户，无需本地下载代码或安装 Node.js 环境：
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
+
+### 快速配置
+
+1. 点击上方的 **Deploy to Cloudflare** 创建 Worker 项目。
+2. 在 Cloudflare 控制台中配置以下变量：
+   - **构建变量** `CLOUDFLARE_TUNNEL_ID`：在 **Settings > Build > Build variables and secrets** 中填入你的 Tunnel/VPC 出口 UUID。
+   - **Worker 机密** `KEY_ENCRYPTION_SECRET`：在 **Settings > Variables and Secrets** 中添加随机加密密钥（例如通过 `openssl rand -hex 32` 生成）。
+   - **Worker 机密** `ADMIN_API_KEY`（可选）：未启用 Cloudflare Access 时用于后台登录的独立密码。
+3. 点击 **Retry deployment（重试部署）**，Durable Objects 和 VPC 网络绑定将自动创建并生效。
+
+完整部署说明及 GitHub Actions CI/CD 配置请参阅[完整部署文档](docs/deployment.zh-CN.md)。
+
 ## 功能
 
 - OpenAI 兼容的 `/v1/models`、`/v1/chat/completions` 和 `/v1/responses`
@@ -38,10 +55,6 @@
 ## 截图
 
 ![管理面板](docs/image.png)
-
-## 部署
-
-参阅[部署文档](docs/deployment.zh-CN.md)。
 
 ## 使用
 

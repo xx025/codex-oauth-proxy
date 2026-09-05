@@ -26,6 +26,23 @@ Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mc
 
 Do not enter private information, personal tokens, production API keys, or accounts you care about on the public demo site.
 
+## Deploy
+
+Click the button below to deploy the Worker directly to Cloudflare. No local download, Node.js installation, or CLI command is required.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
+
+### Quick Setup
+
+1. Click **Deploy to Cloudflare** above to create the Worker.
+2. In Cloudflare Dashboard, configure:
+   - **Build variable** `CLOUDFLARE_TUNNEL_ID`: your Cloudflare Tunnel/VPC egress ID under **Settings > Build > Build variables and secrets**.
+   - **Worker secret** `KEY_ENCRYPTION_SECRET`: a random secret, e.g. `openssl rand -hex 32` under **Settings > Variables and Secrets**.
+   - **Worker secret** `ADMIN_API_KEY`: optional admin password if not using Cloudflare Access.
+3. Retry the deployment. Durable Objects and VPC egress will be configured automatically.
+
+For GitHub Actions CI/CD and detailed instructions, see the [full deployment guide](docs/deployment.md).
+
 ## Features
 
 - OpenAI-compatible `/v1/models`, `/v1/chat/completions`, and `/v1/responses`
@@ -38,10 +55,6 @@ Do not enter private information, personal tokens, production API keys, or accou
 ## Screenshot
 
 ![Administration UI](docs/image.png)
-
-## Deploy
-
-See the [deployment guide](docs/deployment.md).
 
 ## Use
 
