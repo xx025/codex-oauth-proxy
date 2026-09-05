@@ -89,6 +89,7 @@ type CustomApi = {
   fallback: boolean;
   priority: number;
   models: Array<{ id: string; name?: string; ownedBy?: string }>;
+  enabledModelIds: string[];
   validatedAt: number;
 };
 type Settings = {
@@ -498,6 +499,7 @@ function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidate
   const { locale, t } = useI18n();
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [tab, setTab] = useState<"all" | "antigravity" | "codex" | "custom">("all");
+  const [modelApi, setModelApi] = useState<CustomApi | null>(null);
 
   const agAccounts = accounts.filter((a: Account) => a.provider === "antigravity");
   const codexAccounts = accounts.filter((a: Account) => a.provider !== "antigravity");
@@ -567,6 +569,7 @@ function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidate
       );
       setCustomApis(customApis.map((item: CustomApi) => item.id === customApi.id ? data.customApi : item));
       invalidateModels();
+      return data.customApi;
     } catch (error) {
       notify(t("operationFailed"), message(error, t("requestFailed")), true);
     }
@@ -865,7 +868,7 @@ function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidate
                   </div>
                   <code>{customApi.baseUrl}</code>
                   <div class="custom-api-meta">
-                    <span>{t("customApiModels", { count: customApi.models.length })}</span>
+                    <span>{t("customApiModelsEnabled", { enabled: customApi.enabledModelIds.length, total: customApi.models.length })}</span>
                     <span>{t("customApiPriority")} {customApi.priority}</span>
                   </div>
                 </div>
@@ -891,6 +894,7 @@ function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidate
                   />
                 </label>
                 <div class="custom-api-buttons">
+                  <Button onClick={() => setModelApi(customApi)}>{t("manageModels")}</Button>
                   <Button onClick={() => updateCustomApi(customApi, { enabled: !customApi.enabled })}>
                     {customApi.enabled ? t("disable") : t("enable")}
                   </Button>
@@ -901,7 +905,81 @@ function Accounts({ accounts, setAccounts, customApis, setCustomApis, invalidate
           )) : <Empty title={t("noCustomApis")} text={t("customApiEgressHelp")} />}
         </div>
       </Panel>}
+      {modelApi && <CustomApiModelsDialog
+        customApi={customApis.find((item: CustomApi) => item.id === modelApi.id) || modelApi}
+        close={() => setModelApi(null)}
+        save={async (enabledModelIds: string[]) => {
+          const updated = await updateCustomApi(modelApi, { enabledModelIds });
+          if (updated) setModelApi(null);
+        }}
+      />}
     </>
+  );
+}
+function CustomApiModelsDialog({ customApi, close, save }: {
+  customApi: CustomApi;
+  close: () => void;
+  save: (enabledModelIds: string[]) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<string[]>(customApi.enabledModelIds);
+  const [saving, setSaving] = useState(false);
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = customApi.models.filter((model) =>
+    !normalizedQuery || model.id.toLowerCase().includes(normalizedQuery) || model.name?.toLowerCase().includes(normalizedQuery),
+  );
+  const selectedIds = new Set(selected);
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await save(selected);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      title={t("manageModelsTitle", { name: customApi.name })}
+      subtitle={t("manageModelsSubtitle")}
+      close={close}
+      style={{ maxWidth: "720px" }}
+    >
+      <form class="custom-model-form" onSubmit={submit}>
+        <div class="custom-model-toolbar">
+          <input
+            type="search"
+            placeholder={t("searchModels")}
+            value={query}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+          />
+          <span>{t("customApiModelsEnabled", { enabled: selected.length, total: customApi.models.length })}</span>
+          <Button type="button" onClick={() => setSelected(customApi.models.map((model) => model.id))}>{t("selectAllModels")}</Button>
+          <Button type="button" onClick={() => setSelected([])}>{t("clearAllModels")}</Button>
+        </div>
+        <div class="custom-model-list">
+          {visible.map((model) => (
+            <label key={model.id} class="custom-model-option">
+              <input
+                type="checkbox"
+                checked={selectedIds.has(model.id)}
+                onChange={(event) => setSelected(event.currentTarget.checked
+                  ? [...selected, model.id]
+                  : selected.filter((id) => id !== model.id))}
+              />
+              <span><strong>{model.name || model.id}</strong>{model.name && model.name !== model.id ? <small>{model.id}</small> : null}</span>
+              {model.ownedBy ? <small>{model.ownedBy}</small> : null}
+            </label>
+          ))}
+          {!visible.length && <p class="custom-model-empty">{t("noMatchingModels")}</p>}
+        </div>
+        <div class="custom-api-form-actions">
+          <Button type="button" onClick={close}>{t("cancel")}</Button>
+          <Button type="submit" tone="primary" disabled={saving}>{saving ? t("savingModels") : t("saveModels")}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 function Quota({

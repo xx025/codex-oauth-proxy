@@ -78,6 +78,7 @@ describe("AccountPoolCore", () => {
       priority: 5,
       fallback: true,
       models: [{ id: "custom-model", ownedBy: "vendor" }, { id: "other-model", name: "Other" }],
+      enabledModelIds: ["custom-model", "other-model"],
       hasApiKey: true,
     });
     expect(added).not.toHaveProperty("encryptedApiKey");
@@ -93,10 +94,27 @@ describe("AccountPoolCore", () => {
       baseUrl: "https://chatgpt.com/proxy/v1",
     })]);
     expect(await pool.selectCustomApis("missing")).toEqual([]);
+    const filtered = await pool.updateCustomApi(added.id, { enabledModelIds: ["other-model"] });
+    expect(filtered.enabledModelIds).toEqual(["other-model"]);
+    expect(await pool.selectCustomApis("custom-model")).toEqual([]);
+    expect(await pool.selectCustomApis("other-model")).toHaveLength(1);
+    await expect(pool.updateCustomApi(added.id, { enabledModelIds: ["unknown"] }))
+      .rejects.toThrow("unknown model");
     await pool.updateCustomApi(added.id, { enabled: false });
     expect(await pool.selectCustomApis("custom-model")).toEqual([]);
     await pool.removeCustomApi(added.id);
     expect(await pool.listCustomApis()).toEqual([]);
+  });
+
+  it("treats all models on legacy custom APIs as enabled", async () => {
+    const storage = new MemoryStorage();
+    const upstream = vi.fn(async (_input: RequestInfo | URL) => Response.json({ data: [{ id: "legacy-model" }] }));
+    const pool = new AccountPoolCore(storage, upstream as typeof fetch, () => 1_000, "secret");
+    await pool.addCustomApi({ name: "Legacy", baseUrl: "https://example.com/v1", apiKey: "secret" });
+    delete storage.value!.customApis![0].enabledModelIds;
+
+    expect((await pool.listCustomApis())[0].enabledModelIds).toEqual(["legacy-model"]);
+    expect(await pool.selectCustomApis("legacy-model")).toHaveLength(1);
   });
 
   it("rejects invalid custom API model catalogs", async () => {
@@ -114,6 +132,20 @@ describe("AccountPoolCore", () => {
       baseUrl: "https://chatgpt.com/v1",
       apiKey: "secret",
     })).rejects.toThrow("invalid model catalog");
+  });
+
+  it.each([
+    "https://openrouter.ai/api/v1/chat/completions",
+    "https://openrouter.ai/api/v1/responses/",
+    "https://openrouter.ai/api/v1/models",
+  ])("accepts a full custom API endpoint URL: %s", async (baseUrl) => {
+    const upstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ data: [{ id: "test-model" }] }));
+    const pool = new AccountPoolCore(new MemoryStorage(), upstream as typeof fetch, () => 1_000, "secret");
+
+    const added = await pool.addCustomApi({ name: "OpenRouter", baseUrl, apiKey: "secret" });
+
+    expect(added.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(upstream.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/models");
   });
 
   it("refreshes Antigravity quota from daily fetchAvailableModels", async () => {

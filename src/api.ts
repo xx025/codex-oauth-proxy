@@ -100,7 +100,9 @@ export function mergeCustomModelCatalog(
   const seen = new Set(data.map((value) => stringValue(objectValue(value)?.id)).filter(Boolean));
   for (const customApi of customApis) {
     if (!customApi.enabled) continue;
+    const enabledModelIds = new Set(customApi.enabledModelIds);
     for (const model of customApi.models) {
+      if (!enabledModelIds.has(model.id)) continue;
       if (seen.has(model.id)) continue;
       seen.add(model.id);
       data.push({

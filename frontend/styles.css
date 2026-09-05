@@ -835,6 +835,63 @@ textarea:focus-visible {
   padding: 0 10px;
   font-size: 11px;
 }
+.custom-model-form {
+  display: grid;
+  gap: 16px;
+}
+.custom-model-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.custom-model-toolbar input {
+  flex: 1 1 220px;
+}
+.custom-model-toolbar > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.custom-model-list {
+  overflow-y: auto;
+  max-height: min(52vh, 520px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.custom-model-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.custom-model-option:last-child {
+  border-bottom: 0;
+}
+.custom-model-option:hover {
+  background: var(--surface-subtle);
+}
+.custom-model-option span,
+.custom-model-option span small {
+  display: block;
+  min-width: 0;
+}
+.custom-model-option strong,
+.custom-model-option small {
+  overflow-wrap: anywhere;
+}
+.custom-model-option small,
+.custom-model-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+.custom-model-empty {
+  margin: 0;
+  padding: 28px;
+  text-align: center;
+}
 .toggle-control,
 .compact-field {
   display: inline-flex;

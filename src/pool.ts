@@ -199,13 +199,15 @@ export interface CustomApiRecord {
   fallback: boolean;
   priority: number;
   models: CustomApiModel[];
+  enabledModelIds?: string[];
   createdAt: number;
   updatedAt: number;
   validatedAt: number;
 }
 
-export type CustomApiMetadata = Omit<CustomApiRecord, "encryptedApiKey"> & {
+export type CustomApiMetadata = Omit<CustomApiRecord, "encryptedApiKey" | "enabledModelIds"> & {
   hasApiKey: true;
+  enabledModelIds: string[];
 };
 
 export interface SelectedCustomApi {
@@ -293,6 +295,7 @@ export class AccountPoolCore {
       fallback: payload.fallback,
       priority: payload.priority,
       models,
+      enabledModelIds: models.map((model) => model.id),
       createdAt: now,
       updatedAt: now,
       validatedAt: now,
@@ -311,6 +314,8 @@ export class AccountPoolCore {
     if (patch.enabled !== undefined) record.enabled = requiredBoolean(patch.enabled, "enabled");
     if (patch.fallback !== undefined) record.fallback = requiredBoolean(patch.fallback, "fallback");
     if (patch.priority !== undefined) record.priority = customApiPriority(patch.priority);
+    if (patch.enabledModelIds !== undefined)
+      record.enabledModelIds = customApiEnabledModelIds(patch.enabledModelIds, record.models);
     record.updatedAt = this.now();
     await this.storage.put(state);
     return redactCustomApi(record);
@@ -327,7 +332,7 @@ export class AccountPoolCore {
   async selectCustomApis(model: string): Promise<SelectedCustomApi[]> {
     const state = await this.load();
     const records = (state.customApis ?? [])
-      .filter((record) => record.enabled && record.models.some((item) => item.id === model))
+      .filter((record) => record.enabled && enabledCustomApiModelIds(record).has(model))
       .sort((left, right) => left.priority - right.priority || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
     return Promise.all(records.map(async (record) => ({
       id: record.id,
@@ -1154,6 +1159,20 @@ function requiredBoolean(value: unknown, field: string): boolean {
   return value;
 }
 
+function customApiEnabledModelIds(value: unknown, models: readonly CustomApiModel[]): string[] {
+  if (!Array.isArray(value) || value.length > 10_000)
+    throw new PoolError(400, "enabledModelIds must be an array of at most 10000 entries");
+  const available = new Set(models.map((model) => model.id));
+  const enabled = [...new Set(value.map((item) => stringValue(item).trim()))];
+  if (enabled.some((id) => !id || !available.has(id)))
+    throw new PoolError(400, "enabledModelIds contains an unknown model");
+  return enabled;
+}
+
+function enabledCustomApiModelIds(record: CustomApiRecord): Set<string> {
+  return new Set(record.enabledModelIds ?? record.models.map((model) => model.id));
+}
+
 function normalizeCustomApiBaseUrl(value: unknown): string {
   const raw = stringValue(value).trim();
   if (!raw || raw.length > 2_048) throw new PoolError(400, "Invalid custom API base URL");
@@ -1166,6 +1185,7 @@ function normalizeCustomApiBaseUrl(value: unknown): string {
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || (url.port && url.port !== "443"))
     throw new PoolError(400, "Custom API base URL must be an HTTPS URL on port 443 without credentials, query, or fragment");
   let path = url.pathname.replace(/\/+$/, "");
+  path = path.replace(/\/(?:chat\/completions|responses|models)$/i, "");
   if (!path.toLowerCase().endsWith("/v1")) path = `${path}/v1`;
   url.pathname = path.replace(/^\/?/, "/");
   return url.toString().replace(/\/$/, "");
@@ -1356,8 +1376,8 @@ function requiredCustomApi(state: PoolState, id: string): CustomApiRecord {
 }
 
 function redactCustomApi(record: CustomApiRecord): CustomApiMetadata {
-  const { encryptedApiKey: _encryptedApiKey, ...metadata } = record;
-  return { ...metadata, hasApiKey: true };
+  const { encryptedApiKey: _encryptedApiKey, enabledModelIds: _enabledModelIds, ...metadata } = record;
+  return { ...metadata, enabledModelIds: [...enabledCustomApiModelIds(record)], hasApiKey: true };
 }
 
 function legacyProxyKey(): ProxyKeyMetadata {
