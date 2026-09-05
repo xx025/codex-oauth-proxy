@@ -4,11 +4,20 @@ English | [简体中文](README.zh-CN.md)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
+> **100% Cloudflare Serverless AI Gateway**: Zero VPS, zero Docker, zero external database. Runs entirely on Cloudflare Workers and Durable Objects.
+
 Route ChatGPT OAuth, Antigravity accounts, and custom OpenAI-compatible upstreams through a single API on Cloudflare Workers.
 
-Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mcp` while managing built-in accounts and custom upstreams from one administration UI.
+Use it to expose `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/mcp` while managing built-in accounts and custom upstreams from one unified serverless administration UI.
 
 > This project uses an unofficial upstream interface. Use only accounts you control and follow the applicable terms.
+
+## Cloudflare Serverless Architecture
+
+- **100% Serverless Runtime**: No traditional servers, VPS, or containers to maintain. Deploys seamlessly to Cloudflare's global edge network.
+- **Durable Objects Native Storage**: Distributed state persistence, multi-account rotation, quota tracking, and concurrency coordination without external Redis or SQL databases.
+- **Zero Cost & Instant Scale**: Fits within Cloudflare's free plan limits while providing auto-scaling and ultra-low latency worldwide.
+- **Isolated VPC Egress**: Enforces secure outbound routing via Cloudflare VPC / Tunnel (`NATIVE_EGRESS`) to bypass IP blocking and protect upstream credentials.
 
 ## Demo
 
@@ -24,7 +33,7 @@ Do not enter private information, personal tokens, production API keys, or accou
 - Custom OpenAI-compatible APIs with model discovery and fallback
 - Multi-account rotation, token refresh, cooldown, and failover
 - Streaming responses, client API keys, statistics, and model tests
-- Cloudflare Workers, Durable Objects, and mandatory VPC egress
+- 100% Cloudflare Workers + Durable Objects with mandatory VPC egress
 
 ## Screenshot
 

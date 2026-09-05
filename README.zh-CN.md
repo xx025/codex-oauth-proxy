@@ -4,11 +4,20 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xx025/ecrelay)
 
+> **100% Cloudflare Serverless 纯无服务器架构**：零服务器、零 Docker 容器、无需外置数据库或 Redis，完全运行在 Cloudflare Workers 和 Durable Objects 全球边缘网络上。
+
 把 ChatGPT OAuth、Antigravity 账号和自定义 OpenAI 兼容上游统一路由为运行在 Cloudflare Workers 上的 API。
 
 可用于对外提供 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 和 `/mcp`，并在同一个管理面板中管理内置账号与自定义上游。
 
 > 本项目使用非官方上游接口。请只使用自己有权控制的账号，并遵守相关条款。
+
+## Cloudflare Serverless 特性
+
+- **100% 无服务器运行（Pure Serverless）**：告别购买、维护 VPS 或 Docker 容器的繁琐运维，直接依托 Cloudflare 全球边缘节点运行。
+- **Durable Objects 原生持久化**：多账号轮询、状态并发锁、额度跟踪与令牌刷新完全由 Durable Objects 驱动，无需配置任何外部 Redis 或 MySQL。
+- **极致轻量与零成本起步**：高度精简，可在 Cloudflare 免费套餐额度内轻松运行，毫秒级冷启动与全球就近接入。
+- **安全隔离的 VPC 隧道出口**：通过 Cloudflare VPC / Tunnel（`NATIVE_EGRESS`）实现安全网络隔离与可信 IP 转发，有效保障上游账号稳定。
 
 ## 测试站点
 
@@ -24,7 +33,7 @@
 - 自定义 OpenAI 兼容 API、模型发现和 fallback
 - 多账号轮询、Token 刷新、冷却和故障转移
 - 流式响应、客户端 API Key、请求统计和模型测试
-- Cloudflare Workers、Durable Objects 和强制 VPC 出口
+- 100% Cloudflare Workers + Durable Objects 原生架构与强制 VPC 出口
 
 ## 截图
 
